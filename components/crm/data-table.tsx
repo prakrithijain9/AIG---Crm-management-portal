@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { EmptyState } from "@/components/crm/empty-state"
+import { cn } from "@/lib/utils"
 import {
   Table,
   TableBody,
@@ -14,6 +15,8 @@ export type Column<T> = {
   cell: (row: T) => ReactNode
   className?: string
 }
+
+const edgePadding = "px-3 first:pl-4 last:pr-4"
 
 type DataTableProps<T> = {
   columns: Column<T>[]
@@ -35,7 +38,10 @@ export function DataTable<T>({
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           {columns.map((column) => (
-            <TableHead key={column.header} className={column.className}>
+            <TableHead
+              key={column.header}
+              className={cn(edgePadding, column.className)}
+            >
               {column.header}
             </TableHead>
           ))}
@@ -52,7 +58,10 @@ export function DataTable<T>({
           data.map((row) => (
             <TableRow key={getRowId(row)}>
               {columns.map((column) => (
-                <TableCell key={column.header} className={column.className}>
+                <TableCell
+                  key={column.header}
+                  className={cn(edgePadding, column.className)}
+                >
                   {column.cell(row)}
                 </TableCell>
               ))}

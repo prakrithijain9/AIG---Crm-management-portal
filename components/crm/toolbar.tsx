@@ -17,7 +17,7 @@ export function Toolbar({
 }: ToolbarProps) {
   return (
     <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="relative w-full max-w-sm">
+      <div className="relative w-full sm:max-w-sm">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={search}
@@ -26,7 +26,9 @@ export function Toolbar({
           className="pl-8"
         />
       </div>
-      {children ? <div className="flex flex-wrap gap-2">{children}</div> : null}
+      {children ? (
+        <div className="flex flex-wrap gap-2 *:max-sm:w-full">{children}</div>
+      ) : null}
     </div>
   )
 }

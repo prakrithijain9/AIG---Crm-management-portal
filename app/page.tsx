@@ -166,15 +166,15 @@ export default function DashboardPage() {
           <CardContent className="space-y-4">
             {stageSummary.map((item) => (
               <div key={item.stage}>
-                <div className="mb-1 flex items-center justify-between text-sm">
+                <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                   <span>{item.stage}</span>
-                  <span className="text-muted-foreground">
+                  <span className="shrink-0 text-muted-foreground tabular-nums">
                     {item.count} · {formatCurrency(item.value)}
                   </span>
                 </div>
                 <div className="h-2 rounded-full bg-slate-100">
                   <div
-                    className="h-2 rounded-full bg-slate-900"
+                    className="h-2 rounded-full bg-teal-500"
                     style={{ width: item.width }}
                   />
                 </div>

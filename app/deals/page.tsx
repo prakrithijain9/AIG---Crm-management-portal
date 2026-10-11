@@ -96,14 +96,14 @@ export default function DealsPage() {
         </TabsList>
 
         <TabsContent value="pipeline" className="mt-4">
-          <div className="mb-4 max-w-sm">
+          <div className="max-w-sm">
             <Toolbar
               search={search}
               onSearchChange={setSearch}
               placeholder="Search deals"
             />
           </div>
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {dealStages.map((item) => {
               const stageDeals = filtered.filter((deal) => deal.stage === item)
               const total = stageDeals.reduce((sum, deal) => sum + deal.value, 0)

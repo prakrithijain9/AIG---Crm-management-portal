@@ -1,6 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -19,7 +20,8 @@ type FieldProps = {
 
 export function Field({ label, children, error }: FieldProps) {
   return (
-    <div className="grid gap-2">
+    // min-w-0 lets the field shrink to its grid column instead of overflowing into the next one.
+    <div className="grid min-w-0 gap-2">
       <Label>{label}</Label>
       {children}
       {error ? (
@@ -84,12 +86,24 @@ export function SelectField({
   error,
 }: SelectFieldProps) {
   const select = (
-    <Select value={value} onValueChange={(next) => onChange(String(next))}>
+    // `items` tells Base UI each option's label; without it the trigger shows the raw value (e.g. a UUID).
+    <Select
+      items={options}
+      value={value}
+      onValueChange={(next) => onChange(String(next))}
+    >
       <SelectTrigger
-        className={className ?? "w-full"}
+        className={cn("min-w-0", className ?? "w-full")}
         aria-invalid={error ? true : undefined}
       >
-        <SelectValue placeholder={placeholder} />
+        <SelectValue className="min-w-0">
+          {(selected: string) => (
+            <span className="truncate">
+              {options.find((option) => option.value === selected)?.label ??
+                placeholder}
+            </span>
+          )}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (

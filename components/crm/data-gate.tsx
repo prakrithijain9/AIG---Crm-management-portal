@@ -6,8 +6,26 @@ import { useCrm } from "@/components/crm/crm-provider"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 
-/** Shows a loading or error state until the CRM data has been fetched from the API. */
+/**
+ * Shows a loading or error state until the CRM data has been fetched from the API.
+ *
+ * The page (`children`) always stays in the tree, only hidden until the data is ready.
+ * The data loads in an effect, so the server render is always in the loading state;
+ * returning the spinner *instead of* children would drop the page segment from every
+ * prerender, and Next.js could not validate it for instant navigation.
+ */
 export function DataGate({ children }: { children: ReactNode }) {
+  const { loadState } = useCrm()
+
+  return (
+    <>
+      <LoadStatus />
+      <div hidden={loadState.status !== "ready"}>{children}</div>
+    </>
+  )
+}
+
+function LoadStatus() {
   const { loadState, reload } = useCrm()
 
   if (loadState.status === "loading") {
@@ -44,5 +62,5 @@ export function DataGate({ children }: { children: ReactNode }) {
     )
   }
 
-  return children
+  return null
 }

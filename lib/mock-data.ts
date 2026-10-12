@@ -232,7 +232,7 @@ export const activities: Activity[] = [
     subject: "Procurement follow-up on SLA terms",
     companyId: "cmp-1",
     contactId: "ct-1",
-    dueDate: "2026-10-09",
+    dueDate: "2026-10-13",
     status: "Pending",
   },
   {
@@ -241,7 +241,7 @@ export const activities: Activity[] = [
     subject: "On-site demo with plant leadership",
     companyId: "cmp-7",
     contactId: "ct-7",
-    dueDate: "2026-10-10",
+    dueDate: "2026-10-14",
     status: "Pending",
   },
   {
@@ -250,7 +250,7 @@ export const activities: Activity[] = [
     subject: "Send revised proposal deck",
     companyId: "cmp-2",
     contactId: "ct-2",
-    dueDate: "2026-10-08",
+    dueDate: "2026-10-12",
     status: "Pending",
   },
   {
@@ -268,7 +268,7 @@ export const activities: Activity[] = [
     subject: "Prepare security questionnaire answers",
     companyId: "cmp-5",
     contactId: "ct-5",
-    dueDate: "2026-10-14",
+    dueDate: "2026-10-16",
     status: "Pending",
   },
   {
@@ -277,7 +277,7 @@ export const activities: Activity[] = [
     subject: "Partnership intro with clinics team",
     companyId: "cmp-3",
     contactId: "ct-3",
-    dueDate: "2026-10-16",
+    dueDate: "2026-10-19",
     status: "Pending",
   },
   {
@@ -295,7 +295,7 @@ export const activities: Activity[] = [
     subject: "Share case study for media team",
     companyId: "cmp-8",
     contactId: "ct-8",
-    dueDate: "2026-10-11",
+    dueDate: "2026-10-15",
     status: "Pending",
   },
 ]

@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# allow the safe env template to be committed
+!.env.example
+
+# python backend
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

@@ -154,10 +154,11 @@ export default function ActivitiesPage() {
         onOpenChange={(open) => {
           if (!open) setDialog({ open: false })
         }}
-        onSubmit={(input) => {
+        onSubmit={async (input) => {
           if (!dialog.open) return
-          if (dialog.mode === "create") addActivity(input)
-          if (dialog.mode === "edit") updateActivity(dialog.activity.id, input)
+          // Throws on API errors; the dialog then stays open and shows them.
+          if (dialog.mode === "create") await addActivity(input)
+          if (dialog.mode === "edit") await updateActivity(dialog.activity.id, input)
           setDialog({ open: false })
         }}
       />
@@ -169,9 +170,8 @@ export default function ActivitiesPage() {
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null)
         }}
-        onConfirm={() => {
-          if (pendingDelete) deleteActivity(pendingDelete.id)
-          setPendingDelete(null)
+        onConfirm={async () => {
+          if (pendingDelete) await deleteActivity(pendingDelete.id)
         }}
       />
     </div>

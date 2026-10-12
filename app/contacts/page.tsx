@@ -105,10 +105,11 @@ export default function ContactsPage() {
         onOpenChange={(open) => {
           if (!open) setDialog({ open: false })
         }}
-        onSubmit={(input) => {
+        onSubmit={async (input) => {
           if (!dialog.open) return
-          if (dialog.mode === "create") addContact(input)
-          if (dialog.mode === "edit") updateContact(dialog.contact.id, input)
+          // Throws on API errors; the dialog then stays open and shows them.
+          if (dialog.mode === "create") await addContact(input)
+          if (dialog.mode === "edit") await updateContact(dialog.contact.id, input)
           setDialog({ open: false })
         }}
       />
@@ -120,9 +121,8 @@ export default function ContactsPage() {
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null)
         }}
-        onConfirm={() => {
-          if (pendingDelete) deleteContact(pendingDelete.id)
-          setPendingDelete(null)
+        onConfirm={async () => {
+          if (pendingDelete) await deleteContact(pendingDelete.id)
         }}
       />
     </div>

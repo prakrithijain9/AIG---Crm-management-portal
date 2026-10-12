@@ -194,10 +194,11 @@ export default function DealsPage() {
         onOpenChange={(open) => {
           if (!open) setDialog({ open: false })
         }}
-        onSubmit={(input) => {
+        onSubmit={async (input) => {
           if (!dialog.open) return
-          if (dialog.mode === "create") addDeal(input)
-          if (dialog.mode === "edit") updateDeal(dialog.deal.id, input)
+          // Throws on API errors; the dialog then stays open and shows them.
+          if (dialog.mode === "create") await addDeal(input)
+          if (dialog.mode === "edit") await updateDeal(dialog.deal.id, input)
           setDialog({ open: false })
         }}
       />
@@ -209,9 +210,8 @@ export default function DealsPage() {
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null)
         }}
-        onConfirm={() => {
-          if (pendingDelete) deleteDeal(pendingDelete.id)
-          setPendingDelete(null)
+        onConfirm={async () => {
+          if (pendingDelete) await deleteDeal(pendingDelete.id)
         }}
       />
     </div>

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import { CrmProvider } from "@/components/crm/crm-provider"
+import { DataGate } from "@/components/crm/data-gate"
 import { Sidebar } from "@/components/layout/sidebar"
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -11,7 +12,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Sidebar />
         <main className="min-h-screen min-w-0 md:ml-64">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-            {children}
+            <DataGate>{children}</DataGate>
           </div>
         </main>
       </div>

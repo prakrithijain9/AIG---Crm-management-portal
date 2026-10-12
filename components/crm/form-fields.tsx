@@ -14,13 +14,19 @@ import {
 type FieldProps = {
   label: string
   children: ReactNode
+  error?: string
 }
 
-export function Field({ label, children }: FieldProps) {
+export function Field({ label, children, error }: FieldProps) {
   return (
     <div className="grid gap-2">
       <Label>{label}</Label>
       {children}
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -32,6 +38,7 @@ type TextFieldProps = {
   placeholder?: string
   type?: string
   required?: boolean
+  error?: string
 }
 
 export function TextField({
@@ -41,14 +48,16 @@ export function TextField({
   placeholder,
   type = "text",
   required,
+  error,
 }: TextFieldProps) {
   return (
-    <Field label={label}>
+    <Field label={label} error={error}>
       <Input
         type={type}
         value={value}
         required={required}
         placeholder={placeholder}
+        aria-invalid={error ? true : undefined}
         onChange={(event) => onChange(event.target.value)}
       />
     </Field>
@@ -62,6 +71,7 @@ type SelectFieldProps = {
   options: { value: string; label: string }[]
   placeholder?: string
   className?: string
+  error?: string
 }
 
 export function SelectField({
@@ -71,10 +81,14 @@ export function SelectField({
   options,
   placeholder,
   className,
+  error,
 }: SelectFieldProps) {
   const select = (
     <Select value={value} onValueChange={(next) => onChange(String(next))}>
-      <SelectTrigger className={className ?? "w-full"}>
+      <SelectTrigger
+        className={className ?? "w-full"}
+        aria-invalid={error ? true : undefined}
+      >
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -89,7 +103,11 @@ export function SelectField({
 
   if (!label) return select
 
-  return <Field label={label}>{select}</Field>
+  return (
+    <Field label={label} error={error}>
+      {select}
+    </Field>
+  )
 }
 
 export function DetailList({

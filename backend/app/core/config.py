@@ -1,13 +1,71 @@
 """Application settings, loaded from environment variables (or backend/.env)."""
 
+import ipaddress
+import logging
+import re
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+# Environments that may run without a JWT secret (auth then refuses to work, CRUD still does).
+# Any other ENVIRONMENT value, including a typo, is treated as production and fails closed.
+LOCAL_ENVIRONMENTS = frozenset({"development", "test"})
+
+# HS256 key: at least 32 characters (e.g. secrets.token_urlsafe(64) gives 86).
+MIN_JWT_SECRET_LENGTH = 32
+
+# A DNS name or IPv4 address: dot-separated labels of letters, digits and inner hyphens.
+_HOSTNAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
+
+logger = logging.getLogger(__name__)
+
+
+def canonical_origin(value: str) -> str | None:
+    """`value` as a lower-case scheme://host[:port] origin, or None if it is anything else.
+
+    The origin is rebuilt from its parsed parts and must equal the input, which rules out
+    wildcards, user:password@, paths, queries and fragments (even empty "?" or "#"),
+    and malformed hosts or ports. A single trailing slash is tolerated.
+    """
+    origin = value.strip().lower().removesuffix("/")
+    try:
+        parts = urlsplit(origin)
+        port = parts.port  # raises ValueError for a non-numeric or out-of-range port
+    except ValueError:
+        return None
+    host = parts.hostname
+    if parts.scheme not in ("http", "https") or not host or port == 0:
+        return None
+    if ":" in host:  # IPv6 literal, e.g. http://[::1]:3000
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            return None
+        host = f"[{host}]"
+    elif not _HOSTNAME.fullmatch(host):
+        return None
+    canonical = f"{parts.scheme}://{host}" + (f":{port}" if port is not None else "")
+    return canonical if canonical == origin else None
+
+
+def _origin_list(raw: str, source: str) -> list[str]:
+    """Parse a comma-separated origin setting; empty entries are skipped, anything invalid raises."""
+    origins = []
+    for position, item in enumerate(raw.split(","), start=1):
+        if not item.strip():
+            continue
+        origin = canonical_origin(item)  # rejects "*", "null", paths, credentials, bad hosts/ports
+        if origin is None:
+            # Say which entry, never its value: a malformed entry may contain credentials.
+            raise ValueError(f"{source} entry {position} is not a valid origin; expected scheme://host[:port].")
+        origins.append(origin)
+    return origins
 
 
 class Settings(BaseSettings):
@@ -15,6 +73,8 @@ class Settings(BaseSettings):
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Validation errors must never echo input values: they include secrets.
+        hide_input_in_errors=True,
     )
 
     app_name: str = "AIG CRM API"
@@ -31,6 +91,38 @@ class Settings(BaseSettings):
 
     # Comma-separated list of origins allowed to call the API (the Next.js dev server).
     cors_origins: str = "http://localhost:3000"
+
+    # --- Authentication ---------------------------------------------------------------
+
+    # Signing key for session JWTs. Deliberately no default: required outside development/test,
+    # and auth code reads it only through jwt_signing_key(), which raises while it is unset.
+    jwt_secret_key: SecretStr | None = None
+    jwt_issuer: str = Field(default="aig-crm-api", min_length=1)
+    jwt_audience: str = Field(default="aig-crm-web", min_length=1)
+    # Absolute session lifetime (no refresh tokens): 8 hours by default.
+    jwt_expire_minutes: int = Field(default=480, ge=5, le=1440)
+
+    # Send the session cookie over HTTPS only. Unset: on everywhere except development/test.
+    cookie_secure: bool | None = None
+
+    # Comma-separated origins allowed to send state-changing requests (CSRF Origin check).
+    # Empty: same as CORS_ORIGINS.
+    trusted_origins: str = ""
+
+    @model_validator(mode="after")
+    def _check_auth_settings(self) -> "Settings":
+        secret = self.jwt_secret_key.get_secret_value() if self.jwt_secret_key else ""
+        if secret and len(secret) < MIN_JWT_SECRET_LENGTH:
+            raise ValueError(f"JWT_SECRET_KEY must be at least {MIN_JWT_SECRET_LENGTH} characters.")
+        if self.is_production:
+            if not secret:
+                raise ValueError("JWT_SECRET_KEY is required when ENVIRONMENT is not development or test.")
+            if self.cookie_secure is False:
+                raise ValueError("COOKIE_SECURE cannot be false when ENVIRONMENT is not development or test.")
+        # Both raise on a wildcard or malformed origin, so a bad value stops startup.
+        self.cors_origin_list
+        self.trusted_origin_list
+        return self
 
     def url_for(self, database: str) -> URL:
         # URL.create escapes special characters in the password safely.
@@ -53,9 +145,41 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        """Canonical CORS origins. Never "*": with credentials allowed, a wildcard would make
+        the CORS middleware echo back any requesting origin."""
+        return _origin_list(self.cors_origins, "CORS_ORIGINS")
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() not in LOCAL_ENVIRONMENTS
+
+    @property
+    def session_cookie_secure(self) -> bool:
+        return self.is_production if self.cookie_secure is None else self.cookie_secure
+
+    @property
+    def trusted_origin_list(self) -> list[str]:
+        """Canonical origins (scheme://host[:port], lower-case), compared against the Origin header."""
+        if self.trusted_origins:
+            return _origin_list(self.trusted_origins, "TRUSTED_ORIGINS")
+        return self.cors_origin_list
+
+    def jwt_signing_key(self) -> str:
+        """The JWT secret. Raises while unset, so auth fails closed instead of using a weak key."""
+        secret = self.jwt_secret_key.get_secret_value() if self.jwt_secret_key else ""
+        if not secret:
+            raise RuntimeError("JWT_SECRET_KEY is not set; authentication is unavailable (see backend/.env.example).")
+        return secret
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    # Logged once per process (the result is cached). Values from the process environment
+    # or backend/.env count as set; only the built-in default triggers the warning.
+    if "environment" not in settings.model_fields_set:
+        logger.warning(
+            "ENVIRONMENT is not set; defaulting to 'development' (JWT secret optional, session "
+            "cookie not HTTPS-only). Production deployments must set ENVIRONMENT=production."
+        )
+    return settings

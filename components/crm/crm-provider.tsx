@@ -55,7 +55,8 @@ function replaceById<T extends { id: string }>(items: T[], updated: T) {
   return items.map((item) => (item.id === updated.id ? updated : item))
 }
 
-export function CrmProvider({ children }: { children: ReactNode }) {
+/** `enabled`: load data only once an admin is signed in (the API rejects anything else). */
+export function CrmProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   const [companies, setCompanies] = useState<Company[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
   const [deals, setDeals] = useState<Deal[]>([])
@@ -64,6 +65,7 @@ export function CrmProvider({ children }: { children: ReactNode }) {
   const [reloadCount, setReloadCount] = useState(0)
 
   useEffect(() => {
+    if (!enabled) return
     const controller = new AbortController()
     Promise.all([
       api.companies.listAll(controller.signal),
@@ -83,7 +85,7 @@ export function CrmProvider({ children }: { children: ReactNode }) {
         setLoadState({ status: "error", message: errorMessage(error) })
       })
     return () => controller.abort()
-  }, [reloadCount])
+  }, [reloadCount, enabled])
 
   const reload = useCallback(() => {
     setLoadState({ status: "loading" })

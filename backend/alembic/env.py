@@ -47,7 +47,8 @@ def run_migrations_online() -> None:
         _run_with(connection)
         return
 
-    connectable = create_engine(database_url, poolclass=pool.NullPool)
+    # hide_parameters: bound values never appear in logs or error messages.
+    connectable = create_engine(database_url, poolclass=pool.NullPool, hide_parameters=True)
     with connectable.connect() as connection:
         _run_with(connection)
 

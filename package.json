@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:frontend": "node --test lib/api.test.ts"
+    "test:frontend": "node --test lib/api.test.ts lib/auth.test.ts lib/next-config.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

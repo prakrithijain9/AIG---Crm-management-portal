@@ -2,6 +2,7 @@
 
 from app.db.base import Base
 from app.models.activity import Activity
+from app.models.admin_user import AdminUser
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.deal import Deal
@@ -11,6 +12,7 @@ __all__ = [
     "Activity",
     "ActivityStatus",
     "ActivityType",
+    "AdminUser",
     "Base",
     "Company",
     "CompanyStatus",

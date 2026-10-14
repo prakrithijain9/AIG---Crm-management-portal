@@ -16,6 +16,8 @@ certifi==2026.7.22
 
 # Settings / validation
 pydantic[email]==2.14.1
+# pydantic[email] allows any email-validator >= 2.0; pinned because it validates every EmailStr field.
+email-validator==2.3.0
 pydantic-settings==2.15.0
 
 # Authentication: session JWTs (HS256) and Argon2id password hashing

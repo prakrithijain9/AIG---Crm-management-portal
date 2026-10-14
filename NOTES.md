@@ -526,16 +526,42 @@ Environment variables (secrets marked; never commit them):
 
 **3. Migrations and the first admin (once, before first use)**
 
-Run from `backend/` in a terminal that can reach Neon: Render Shell (paid plans), or locally with **all** of
-`ENVIRONMENT`, `JWT_SECRET_KEY` and the `DB_*` variables set to the production values in that terminal session
-(they override `backend/.env`; anything left unset would fall back to the local `aig_crm_dev` settings).
+*Preferred: Render Shell* (paid plans). The service's environment variables are already set there, so no
+secret is typed or copied anywhere:
 
-```powershell
-.venv\Scripts\alembic upgrade head
-.venv\Scripts\python scripts\create_admin.py     # prompts for username and password
+```bash
+cd backend                        # if the shell does not start there
+alembic upgrade head
+python scripts/create_admin.py    # prompts for username and password (hidden)
 ```
 
-On paid Render plans, `alembic upgrade head` can instead be the service's **Pre-Deploy Command**.
+On paid plans, `alembic upgrade head` can instead be the service's **Pre-Deploy Command**.
+
+*Otherwise: locally, in a new PowerShell window* from `backend/`. Never type a secret into a command such as
+`$env:DB_PASSWORD = "..."` or a script file: PowerShell saves typed commands to its history file. Read the
+password with a hidden prompt instead (`Read-Host` input is not saved to history):
+
+```powershell
+# Only what these scripts need. They never sign sessions, so no JWT_SECRET_KEY; ENVIRONMENT=development
+# avoids requiring one, and DB_SSLMODE=verify-full still enforces the production TLS checks.
+$env:ENVIRONMENT = "development"
+$env:DB_SSLMODE  = "verify-full"
+$env:DB_HOST = "<Neon direct host>"; $env:DB_PORT = "5432"
+$env:DB_USER = "<Neon role>";        $env:DB_NAME = "<Neon database>"
+$pw = Read-Host "Neon password" -AsSecureString
+$env:DB_PASSWORD = [System.Net.NetworkCredential]::new("", $pw).Password
+Remove-Variable pw
+
+# Check the target before changing anything (prints no password):
+.venv\Scripts\python -c "from app.core.config import get_settings as g; s = g(); print(s.db_host, s.db_name, s.effective_db_sslmode)"
+
+.venv\Scripts\alembic upgrade head
+.venv\Scripts\python scripts\create_admin.py     # prompts for username and password (hidden)
+```
+
+These variables override `backend/.env` for that window only; any you leave out fall back to the local
+`aig_crm_dev` settings, which the check above would reveal. Close the window afterwards so the password does
+not stay in its environment.
 
 **4. Check the backend** at `https://<service>.onrender.com`: `/health` returns `{"status":"ok"}`, `/health/db`
 names the Neon database (proving the `verify-full` connection works), `/api/companies` returns 401, `/docs` is 404.

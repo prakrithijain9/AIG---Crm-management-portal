@@ -28,13 +28,15 @@ Next.js frontend (:3000) ──HTTP──▶ FastAPI app (Uvicorn, :8000)
 
 Tested with: fastapi 0.143.0 · uvicorn 0.54.0 · SQLAlchemy 2.1.4 · psycopg 3.3.6 (binary) · alembic 1.20.0 ·
 pydantic 2.14.1 · pydantic-settings 2.15.0 · pytest 9.1.1 · httpx 0.28.1 · email-validator 2.3.0
-(`pydantic[email]`, used by `EmailStr`). `requirements.txt` specifies minimum versions only.
+(`pydantic[email]`, used by `EmailStr`). `requirements.txt` pins these exact versions, plus `starlette`,
+`argon2-cffi` and `certifi` (see [Deployment](#deployment-render--neon--vercel)). `backend/.python-version` is `3.13.5`.
 
 ## Project layout
 
 ```
 backend/
-  requirements.txt          dependencies
+  requirements.txt          dependencies (exact, tested versions)
+  .python-version           Python version for local tools and hosting (3.13.5)
   .env.example              safe template (copy to .env)
   pytest.ini
   alembic.ini               Alembic config (no DB URL in it)
@@ -42,7 +44,7 @@ backend/
   alembic/versions/09d6732c3643_create_crm_tables.py   first migration
   alembic/versions/5b4a0b13a9f1_create_admin_users_table.py   admin_users table
   app/main.py               FastAPI app, CORS; CRM routers mounted behind require_admin
-  app/core/config.py        Settings (DB_*, JWT_*, COOKIE_SECURE, TRUSTED_ORIGINS) + startup checks
+  app/core/config.py        Settings (DB_* incl. DB_SSLMODE, JWT_*, COOKIE_SECURE, TRUSTED_ORIGINS) + startup checks
   app/core/security.py      Argon2id hashing, session JWT create/verify, CSRF token comparison
   app/core/admins.py        create_admin() and reset_admin_password(): validation, verified hash, safe errors
   app/api/auth.py           /api/auth/login, /logout, /me; require_admin guard (session + CSRF/origin)
@@ -160,7 +162,7 @@ npm run build
 
 | Check | Result |
 |---|---|
-| Backend `pytest` | 481 passed |
+| Backend `pytest` | 504 passed |
 | `npm run test:frontend` | 26 passed |
 | `tsc --noEmit` | passes |
 | `npm run lint` | 0 problems |
@@ -203,6 +205,9 @@ It does not affect results; revisit when upgrading test dependencies.
   registration endpoint, password hashing and token validation, admin creation, admin table constraints,
   and password reset (success, session sign-out, policy, unknown/inactive admin, mismatch, cancel,
   rollback on database errors, nothing sensitive in output or logs, refuses the test database).
+- **Database TLS settings:** no SSL parameters locally by default, `verify-full` with the certifi bundle in
+  production, weaker or unknown modes refused, custom/`system` CA, parameters accepted by libpq, and the
+  bundle containing Neon's root CA.
 - **Frontend API client:** request building, error mapping (including non-JSON server errors and network failures), paging,
   login, session loading, CSRF header on writes only, expired-session handling, logout; safe `?next=` redirects.
 - **Frontend config:** the security headers in `next.config.ts` and the same-origin `/api` rewrite.
@@ -476,7 +481,76 @@ In the production environment (not `backend/.env.example`):
   `https://crm.example.com`: scheme and host, no path, and no default port (`:443`), since browsers omit it.
   Both settings are validated at startup: `*`, `null`, paths, credentials or malformed origins stop the API
   from starting (credentials are allowed, so a wildcard would let any site call the API).
-- Keep FastAPI reachable only through the Next.js server (bind it to `127.0.0.1` or a private network).
+- Database TLS: `DB_SSLMODE` defaults to `verify-full` in production (encrypted, with the server's certificate
+  and hostname checked against the certifi CA bundle), and any weaker value stops the API from starting.
+  `DB_SSLROOTCERT` can point to another CA file, or `system` for the OS store.
+- The browser only ever talks to the Next.js site; it forwards `/api/*` to FastAPI. FastAPI itself may still be
+  publicly reachable (as on Render), so every CRM route requires a session and cross-site writes are refused.
+
+## Deployment (Render + Neon + Vercel)
+
+PostgreSQL on **Neon**, FastAPI on **Render**, Next.js on **Vercel** (production tracks `main`). The browser
+calls the Vercel site; Vercel forwards `/api/*` to Render, so the session cookie belongs to the Vercel domain.
+
+**1. Neon (database)**
+
+- Create a project (region close to the Render service), a database (e.g. `aig_crm`) and a role that owns it.
+  Use new credentials, never the local ones.
+- Use the **direct** connection host (not the `-pooler` one). Split Neon's connection string into the
+  `DB_*` values below; the app does not read a single `DATABASE_URL`.
+
+**2. Render (backend web service)**
+
+| Setting | Value |
+|---|---|
+| Root Directory | `backend` |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/health` |
+
+Environment variables (secrets marked; never commit them):
+
+| Variable | Value |
+|---|---|
+| `ENVIRONMENT` | `production` |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME` | from Neon (`DB_PORT` is `5432`) |
+| `DB_PASSWORD` | from Neon (**secret**) |
+| `JWT_SECRET_KEY` | a new random value, 32+ characters (**secret**; generate as in Setup) |
+| `CORS_ORIGINS` | the Vercel production origin(s), e.g. `https://<project>.vercel.app`; comma-separated |
+| `PYTHON_VERSION` | `3.13.5` |
+
+- Leave `DB_SSLMODE` unset (production uses `verify-full`) and `COOKIE_SECURE` unset (HTTPS-only in production).
+  `TRUSTED_ORIGINS` defaults to `CORS_ORIGINS`. Never set `TEST_DB_NAME` or run the tests against Neon.
+- `PYTHON_VERSION` takes precedence over `.python-version`. Render's docs describe the file at the repository
+  root, while this one is in `backend/`, so set the variable (new Render services otherwise default to 3.14).
+
+**3. Migrations and the first admin (once, before first use)**
+
+Run from `backend/` in a terminal that can reach Neon: Render Shell (paid plans), or locally with **all** of
+`ENVIRONMENT`, `JWT_SECRET_KEY` and the `DB_*` variables set to the production values in that terminal session
+(they override `backend/.env`; anything left unset would fall back to the local `aig_crm_dev` settings).
+
+```powershell
+.venv\Scripts\alembic upgrade head
+.venv\Scripts\python scripts\create_admin.py     # prompts for username and password
+```
+
+On paid Render plans, `alembic upgrade head` can instead be the service's **Pre-Deploy Command**.
+
+**4. Check the backend** at `https://<service>.onrender.com`: `/health` returns `{"status":"ok"}`, `/health/db`
+names the Neon database (proving the `verify-full` connection works), `/api/companies` returns 401, `/docs` is 404.
+
+**5. Vercel (frontend)**
+
+- Set `CRM_API_URL` = `https://<service>.onrender.com` (no trailing slash, no `/api`) for **Production only**.
+  It is read at build time, so set it **before** the production build (merging into `main`), or redeploy after.
+  Preview deployments then have no backend, which keeps them away from production data.
+- After the production deploy: `/` redirects to `/login`, sign-in works and data loads, `/api/companies`
+  without a session is 401, and responses carry the security headers.
+
+**Notes:** Render's free plan sleeps after ~15 minutes idle and the first request can take a minute (Vercel's
+proxy may time out meanwhile); a paid instance avoids this. Neon also suspends idle compute; pooled
+connections are re-checked before use. Add a custom domain to `CORS_ORIGINS` when you add it in Vercel.
 
 ## Troubleshooting
 
@@ -493,6 +567,10 @@ In the production environment (not `backend/.env.example`):
 - **`/health/db` returns 503 `database unavailable (OperationalError)`:** PostgreSQL is not running, or
   `backend/.env` is missing or has wrong credentials.
 - **Test setup fails with `Test database 'aig_crm_test' is not reachable`:** run `scripts/create_dev_db.py` to create it.
+- **API won't start: `DB_SSLMODE must be verify-full ...`:** production refuses weaker TLS modes; unset
+  `DB_SSLMODE`. **`DB_SSLROOTCERT must be ...`:** the CA file path does not exist; unset it to use certifi.
+- **Production `/health/db` returns 503 `OperationalError`:** check the `DB_*` values against Neon (direct host,
+  database name, role), that the Neon project is not suspended or deleted, and the Render logs for TLS errors.
 
 ## Limitations and future work
 
@@ -500,8 +578,9 @@ In the production environment (not `backend/.env.example`):
   through the server-side reset script (no self-service password change in the UI).
 - **No login rate limiting:** Argon2id slows each guess, but repeated attempts are not throttled or locked out.
   Add rate limiting (e.g. at a reverse proxy) before exposing the app publicly.
-- **Not deployment-ready:** no HTTPS, secrets management, hosted database or production logging.
-  Backend dependencies use minimum-version ranges (`>=`) without a lock file; pin them before deploying.
+- **Deployment:** documented above but not yet carried out. Production logging and monitoring are not set up.
+  `requirements.txt` pins direct dependencies (and Starlette and argon2-cffi), but other transitive packages
+  are resolved at install time; use a lock file if fully reproducible builds are needed.
 - **Data freshness:** data is loaded once per page load. Changes made elsewhere (another tab or user) appear only
   after a reload or "Try again". Consider refetch-on-focus or a data library if multi-user editing matters.
 - **Client-side search and filtering:** the UI filters the loaded data. The API's server-side search and filters

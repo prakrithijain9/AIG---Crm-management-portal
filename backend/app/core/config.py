@@ -7,7 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, model_validator
+import certifi
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -19,6 +20,12 @@ LOCAL_ENVIRONMENTS = frozenset({"development", "test"})
 
 # HS256 key: at least 32 characters (e.g. secrets.token_urlsafe(64) gives 86).
 MIN_JWT_SECRET_LENGTH = 32
+
+# libpq sslmode values, weakest to strongest. Production accepts only verify-full: the connection
+# is encrypted and the server's certificate and hostname are checked.
+DB_SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
+PRODUCTION_DB_SSLMODE = "verify-full"
+_CERT_VERIFYING_SSL_MODES = frozenset({"verify-ca", "verify-full"})
 
 # A DNS name or IPv4 address: dot-separated labels of letters, digits and inner hyphens.
 _HOSTNAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
@@ -89,6 +96,13 @@ class Settings(BaseSettings):
     # Separate database used only by the test suite (same server and role).
     test_db_name: str = "aig_crm_test"
 
+    # PostgreSQL TLS (libpq sslmode). Unset: libpq's own default in development/test (works with
+    # a local server without SSL), verify-full in production, where nothing weaker is accepted.
+    db_sslmode: str | None = None
+    # CA certificates for verify-ca/verify-full: a file path, or "system" for the OS store.
+    # Unset: certifi's Mozilla bundle, which includes Let's Encrypt's ISRG Root X1 (Neon's CA).
+    db_sslrootcert: str | None = None
+
     # Comma-separated list of origins allowed to call the API (the Next.js dev server).
     cors_origins: str = "http://localhost:3000"
 
@@ -108,6 +122,30 @@ class Settings(BaseSettings):
     # Comma-separated origins allowed to send state-changing requests (CSRF Origin check).
     # Empty: same as CORS_ORIGINS.
     trusted_origins: str = ""
+
+    @field_validator("db_sslmode", "db_sslrootcert", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # "DB_SSLMODE=" in a .env file means "not set", not an invalid empty mode.
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @model_validator(mode="after")
+    def _check_db_ssl_settings(self) -> "Settings":
+        if self.db_sslmode is not None:
+            self.db_sslmode = self.db_sslmode.lower()
+            if self.db_sslmode not in DB_SSL_MODES:
+                raise ValueError(f"DB_SSLMODE must be one of: {', '.join(DB_SSL_MODES)}.")
+        if self.is_production and self.effective_db_sslmode != PRODUCTION_DB_SSLMODE:
+            raise ValueError(
+                f"DB_SSLMODE must be {PRODUCTION_DB_SSLMODE} (or unset) when ENVIRONMENT is not development or test."
+            )
+        rootcert = self.db_sslrootcert
+        if rootcert is not None and rootcert != "system" and not Path(rootcert).is_file():
+            raise ValueError("DB_SSLROOTCERT must be 'system' or the path to an existing certificate file.")
+        return self
 
     @model_validator(mode="after")
     def _check_auth_settings(self) -> "Settings":
@@ -133,7 +171,26 @@ class Settings(BaseSettings):
             host=self.db_host,
             port=self.db_port,
             database=database,
+            query=self.db_ssl_params,
         )
+
+    @property
+    def effective_db_sslmode(self) -> str | None:
+        """DB_SSLMODE, or the environment's default: verify-full in production, libpq's own locally."""
+        if self.db_sslmode is not None:
+            return self.db_sslmode
+        return PRODUCTION_DB_SSLMODE if self.is_production else None
+
+    @property
+    def db_ssl_params(self) -> dict[str, str]:
+        """libpq TLS parameters for the connection URL (empty: libpq defaults)."""
+        mode = self.effective_db_sslmode
+        if mode is None:
+            return {}
+        params = {"sslmode": mode}
+        if mode in _CERT_VERIFYING_SSL_MODES:
+            params["sslrootcert"] = self.db_sslrootcert or certifi.where()
+        return params
 
     @property
     def database_url(self) -> URL:

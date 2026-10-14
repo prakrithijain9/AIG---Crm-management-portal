@@ -38,7 +38,8 @@ def main() -> int:
         print(f"REFUSED: {exc}")
         return 2
 
-    engine = create_engine(settings.url_for(target))
+    # hide_parameters: bound values never appear in logs or error messages.
+    engine = create_engine(settings.url_for(target), hide_parameters=True)
     with Session(engine) as db:
         if not args.apply:
             db.execute(text("SET TRANSACTION READ ONLY"))

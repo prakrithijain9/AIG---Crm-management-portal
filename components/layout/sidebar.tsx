@@ -9,10 +9,13 @@ import {
   CalendarCheck2,
   Handshake,
   LayoutDashboard,
+  LoaderCircle,
+  LogOut,
   Menu,
   Users,
   X,
 } from "lucide-react"
+import { useSession } from "@/components/auth/session-provider"
 import { cn } from "@/lib/utils"
 
 const navigation = [
@@ -23,7 +26,7 @@ const navigation = [
   { href: "/activities", label: "Activities", icon: CalendarCheck2 },
 ]
 
-function Brand() {
+export function Brand() {
   return (
     <div className="flex items-center gap-3">
       <div className="relative size-9 shrink-0 overflow-hidden rounded-lg bg-white">
@@ -148,11 +151,43 @@ export function Sidebar() {
           })}
         </nav>
 
-        <div className="shrink-0 border-t border-white/10 px-5 py-4">
-          <p className="truncate text-sm font-medium">Prakrithi Jain</p>
-          <p className="truncate text-xs text-slate-400">Account executive</p>
-        </div>
+        <SessionFooter />
       </aside>
     </>
+  )
+}
+
+function SessionFooter() {
+  const { state, signOut } = useSession()
+  const [signingOut, setSigningOut] = useState(false)
+
+  if (state.status !== "authenticated") return null
+
+  const handleSignOut = async () => {
+    setSigningOut(true)
+    try {
+      await signOut() // the app shell then redirects to the login page
+    } catch {
+      setSigningOut(false) // signed out locally anyway; allow another attempt
+    }
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-t border-white/10 px-5 py-4">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{state.session.username}</p>
+        <p className="truncate text-xs text-slate-400">Administrator</p>
+      </div>
+      <button
+        type="button"
+        onClick={handleSignOut}
+        disabled={signingOut}
+        aria-label="Sign out"
+        title="Sign out"
+        className="flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 hover:text-white disabled:opacity-50"
+      >
+        {signingOut ? <LoaderCircle className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+      </button>
+    </div>
   )
 }

@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import { DetailList, SelectField, TextField } from "@/components/crm/form-fields"
 import { EntityDialog } from "@/components/crm/entity-dialog"
 import { StatusBadge } from "@/components/crm/status-badge"
+import { requireCompany, useDialogForm } from "@/components/crm/use-dialog-form"
 import {
   companyNameById,
   contactNameById,
@@ -26,7 +27,7 @@ type ActivityDialogProps = {
   companies: Company[]
   contacts: Contact[]
   onOpenChange: (open: boolean) => void
-  onSubmit: (input: ActivityInput) => void
+  onSubmit: (input: ActivityInput) => Promise<void>
 }
 
 function emptyActivity(companies: Company[]): ActivityInput {
@@ -49,11 +50,10 @@ export function ActivityDialog({
   onOpenChange,
   onSubmit,
 }: ActivityDialogProps) {
-  const [form, setForm] = useState<ActivityInput>(emptyActivity(companies))
-
-  useEffect(() => {
-    if (!open) return
-    setForm(
+  const { form, setForm, saving, error, fieldErrors, submit } = useDialogForm<ActivityInput>(
+    open,
+    `${mode}:${activity?.id ?? "new"}`,
+    () =>
       activity
         ? {
             type: activity.type,
@@ -63,9 +63,10 @@ export function ActivityDialog({
             dueDate: activity.dueDate,
             status: activity.status,
           }
-        : emptyActivity(companies)
-    )
-  }, [activity, companies, open])
+        : emptyActivity(companies),
+    onSubmit,
+    requireCompany
+  )
 
   const companyContacts = useMemo(
     () => contacts.filter((contact) => contact.companyId === form.companyId),
@@ -89,7 +90,9 @@ export function ActivityDialog({
           : "Log a call, meeting, or task against an account."
       }
       onOpenChange={onOpenChange}
-      onSubmit={() => onSubmit(form)}
+      onSubmit={submit}
+      saving={saving}
+      error={error}
     >
       {mode === "view" ? (
         <DetailList
@@ -116,6 +119,7 @@ export function ActivityDialog({
           <SelectField
             label="Type"
             value={form.type}
+            error={fieldErrors.type}
             options={activityTypes.map((type) => ({
               value: type,
               label: type,
@@ -130,6 +134,7 @@ export function ActivityDialog({
           <SelectField
             label="Status"
             value={form.status}
+            error={fieldErrors.status}
             options={activityStatuses.map((status) => ({
               value: status,
               label: status,
@@ -146,6 +151,7 @@ export function ActivityDialog({
               label="Subject"
               value={form.subject}
               required
+              error={fieldErrors.subject}
               onChange={(subject) =>
                 setForm((current) => ({ ...current, subject }))
               }
@@ -154,6 +160,7 @@ export function ActivityDialog({
           <SelectField
             label="Company"
             value={form.companyId}
+            error={fieldErrors.companyId}
             options={companies.map((company) => ({
               value: company.id,
               label: company.name,
@@ -169,6 +176,7 @@ export function ActivityDialog({
           <SelectField
             label="Contact"
             value={form.contactId ?? "none"}
+            error={fieldErrors.contactId}
             options={[
               { value: "none", label: "No specific contact" },
               ...companyContacts.map((contact) => ({
@@ -189,6 +197,7 @@ export function ActivityDialog({
               type="date"
               value={form.dueDate}
               required
+              error={fieldErrors.dueDate}
               onChange={(dueDate) =>
                 setForm((current) => ({ ...current, dueDate }))
               }

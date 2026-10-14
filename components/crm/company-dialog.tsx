@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { DetailList, SelectField, TextField } from "@/components/crm/form-fields"
 import { EntityDialog } from "@/components/crm/entity-dialog"
 import { StatusBadge } from "@/components/crm/status-badge"
+import { useDialogForm } from "@/components/crm/use-dialog-form"
 import type { Company, CompanyInput, CompanyStatus } from "@/lib/types"
 import { companyStatuses } from "@/lib/types"
 
@@ -12,7 +12,7 @@ type CompanyDialogProps = {
   mode: "view" | "edit" | "create"
   company?: Company
   onOpenChange: (open: boolean) => void
-  onSubmit: (input: CompanyInput) => void
+  onSubmit: (input: CompanyInput) => Promise<void>
 }
 
 const emptyCompany: CompanyInput = {
@@ -31,11 +31,10 @@ export function CompanyDialog({
   onOpenChange,
   onSubmit,
 }: CompanyDialogProps) {
-  const [form, setForm] = useState<CompanyInput>(emptyCompany)
-
-  useEffect(() => {
-    if (!open) return
-    setForm(
+  const { form, setForm, saving, error, fieldErrors, submit } = useDialogForm<CompanyInput>(
+    open,
+    `${mode}:${company?.id ?? "new"}`,
+    () =>
       company
         ? {
             name: company.name,
@@ -45,9 +44,9 @@ export function CompanyDialog({
             location: company.location,
             status: company.status,
           }
-        : emptyCompany
-    )
-  }, [company, open])
+        : emptyCompany,
+    onSubmit
+  )
 
   return (
     <EntityDialog
@@ -66,7 +65,9 @@ export function CompanyDialog({
           : "Capture the core account details used across deals and contacts."
       }
       onOpenChange={onOpenChange}
-      onSubmit={() => onSubmit(form)}
+      onSubmit={submit}
+      saving={saving}
+      error={error}
     >
       {mode === "view" ? (
         <DetailList
@@ -86,6 +87,7 @@ export function CompanyDialog({
               label="Company name"
               value={form.name}
               required
+              error={fieldErrors.name}
               onChange={(name) => setForm((current) => ({ ...current, name }))}
             />
           </div>
@@ -93,12 +95,14 @@ export function CompanyDialog({
             label="Industry"
             value={form.industry}
             required
+            error={fieldErrors.industry}
             onChange={(industry) =>
               setForm((current) => ({ ...current, industry }))
             }
           />
           <SelectField
             label="Status"
+            error={fieldErrors.status}
             value={form.status}
             options={companyStatuses.map((status) => ({
               value: status,
@@ -116,12 +120,14 @@ export function CompanyDialog({
             type="email"
             value={form.email}
             required
+            error={fieldErrors.email}
             onChange={(email) => setForm((current) => ({ ...current, email }))}
           />
           <TextField
             label="Phone"
             value={form.phone}
             required
+            error={fieldErrors.phone}
             onChange={(phone) => setForm((current) => ({ ...current, phone }))}
           />
           <div className="sm:col-span-2">
@@ -129,6 +135,7 @@ export function CompanyDialog({
               label="Location"
               value={form.location}
               required
+              error={fieldErrors.location}
               onChange={(location) =>
                 setForm((current) => ({ ...current, location }))
               }

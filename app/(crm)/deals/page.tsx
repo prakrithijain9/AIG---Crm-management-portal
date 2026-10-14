@@ -125,25 +125,38 @@ export default function DealsPage() {
                       </p>
                     ) : (
                       stageDeals.map((deal) => (
-                        <button
-                          key={deal.id}
-                          type="button"
-                          className="w-full rounded-lg border bg-background p-3 text-left transition-colors hover:bg-muted/60"
-                          onClick={() =>
-                            setDialog({ open: true, mode: "view", deal })
-                          }
-                        >
-                          <p className="font-medium">{deal.title}</p>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            {companyNameById(companies, deal.companyId)}
-                          </p>
-                          <div className="mt-3 flex items-center justify-between text-sm">
-                            <span>{formatCurrency(deal.value)}</span>
-                            <span className="text-muted-foreground">
-                              {formatDate(deal.expectedCloseDate)}
-                            </span>
+                        // The actions menu sits beside the card button, not inside it (no nested buttons).
+                        <div key={deal.id} className="relative">
+                          <button
+                            type="button"
+                            className="w-full rounded-lg border bg-background p-3 pr-10 text-left transition-colors hover:bg-muted/60"
+                            onClick={() =>
+                              setDialog({ open: true, mode: "view", deal })
+                            }
+                          >
+                            <p className="font-medium">{deal.title}</p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {companyNameById(companies, deal.companyId)}
+                            </p>
+                            <div className="mt-3 flex items-center justify-between text-sm">
+                              <span>{formatCurrency(deal.value)}</span>
+                              <span className="text-muted-foreground">
+                                {formatDate(deal.expectedCloseDate)}
+                              </span>
+                            </div>
+                          </button>
+                          <div className="absolute top-2 right-2">
+                            <RowActions
+                              onView={() =>
+                                setDialog({ open: true, mode: "view", deal })
+                              }
+                              onEdit={() =>
+                                setDialog({ open: true, mode: "edit", deal })
+                              }
+                              onDelete={() => setPendingDelete(deal)}
+                            />
                           </div>
-                        </button>
+                        </div>
                       ))
                     )}
                   </CardContent>
@@ -194,10 +207,11 @@ export default function DealsPage() {
         onOpenChange={(open) => {
           if (!open) setDialog({ open: false })
         }}
-        onSubmit={(input) => {
+        onSubmit={async (input) => {
           if (!dialog.open) return
-          if (dialog.mode === "create") addDeal(input)
-          if (dialog.mode === "edit") updateDeal(dialog.deal.id, input)
+          // Throws on API errors; the dialog then stays open and shows them.
+          if (dialog.mode === "create") await addDeal(input)
+          if (dialog.mode === "edit") await updateDeal(dialog.deal.id, input)
           setDialog({ open: false })
         }}
       />
@@ -209,9 +223,8 @@ export default function DealsPage() {
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null)
         }}
-        onConfirm={() => {
-          if (pendingDelete) deleteDeal(pendingDelete.id)
-          setPendingDelete(null)
+        onConfirm={async () => {
+          if (pendingDelete) await deleteDeal(pendingDelete.id)
         }}
       />
     </div>

@@ -17,10 +17,6 @@ export function formatDate(isoDate: string) {
   }).format(date)
 }
 
-export function createId(prefix: string) {
-  return `${prefix}-${crypto.randomUUID().slice(0, 8)}`
-}
-
 export function companyNameById(
   companies: { id: string; name: string }[],
   companyId: string

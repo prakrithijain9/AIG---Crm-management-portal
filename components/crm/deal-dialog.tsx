@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { DetailList, SelectField, TextField } from "@/components/crm/form-fields"
 import { EntityDialog } from "@/components/crm/entity-dialog"
 import { StatusBadge } from "@/components/crm/status-badge"
+import { requireCompany, useDialogForm } from "@/components/crm/use-dialog-form"
 import { companyNameById, formatCurrency, formatDate } from "@/lib/format"
 import type { Company, Deal, DealInput, DealStage } from "@/lib/types"
 import { dealStages } from "@/lib/types"
@@ -14,7 +14,7 @@ type DealDialogProps = {
   deal?: Deal
   companies: Company[]
   onOpenChange: (open: boolean) => void
-  onSubmit: (input: DealInput) => void
+  onSubmit: (input: DealInput) => Promise<void>
 }
 
 function emptyDeal(companies: Company[]): DealInput {
@@ -35,11 +35,10 @@ export function DealDialog({
   onOpenChange,
   onSubmit,
 }: DealDialogProps) {
-  const [form, setForm] = useState<DealInput>(emptyDeal(companies))
-
-  useEffect(() => {
-    if (!open) return
-    setForm(
+  const { form, setForm, saving, error, fieldErrors, submit } = useDialogForm<DealInput>(
+    open,
+    `${mode}:${deal?.id ?? "new"}`,
+    () =>
       deal
         ? {
             title: deal.title,
@@ -48,9 +47,10 @@ export function DealDialog({
             stage: deal.stage,
             expectedCloseDate: deal.expectedCloseDate,
           }
-        : emptyDeal(companies)
-    )
-  }, [companies, deal, open])
+        : emptyDeal(companies),
+    onSubmit,
+    requireCompany
+  )
 
   return (
     <EntityDialog
@@ -69,7 +69,9 @@ export function DealDialog({
           : "Track opportunity value, owner account, and pipeline stage."
       }
       onOpenChange={onOpenChange}
-      onSubmit={() => onSubmit(form)}
+      onSubmit={submit}
+      saving={saving}
+      error={error}
     >
       {mode === "view" ? (
         <DetailList
@@ -96,12 +98,14 @@ export function DealDialog({
               label="Deal title"
               value={form.title}
               required
+              error={fieldErrors.title}
               onChange={(title) => setForm((current) => ({ ...current, title }))}
             />
           </div>
           <SelectField
             label="Company"
             value={form.companyId}
+            error={fieldErrors.companyId}
             options={companies.map((company) => ({
               value: company.id,
               label: company.name,
@@ -113,6 +117,7 @@ export function DealDialog({
           <SelectField
             label="Stage"
             value={form.stage}
+            error={fieldErrors.stage}
             options={dealStages.map((stage) => ({
               value: stage,
               label: stage,
@@ -126,6 +131,7 @@ export function DealDialog({
             type="number"
             value={String(form.value)}
             required
+            error={fieldErrors.value}
             onChange={(value) =>
               setForm((current) => ({
                 ...current,
@@ -138,6 +144,7 @@ export function DealDialog({
             type="date"
             value={form.expectedCloseDate}
             required
+            error={fieldErrors.expectedCloseDate}
             onChange={(expectedCloseDate) =>
               setForm((current) => ({ ...current, expectedCloseDate }))
             }

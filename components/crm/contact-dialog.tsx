@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { DetailList, SelectField, TextField } from "@/components/crm/form-fields"
 import { EntityDialog } from "@/components/crm/entity-dialog"
+import { requireCompany, useDialogForm } from "@/components/crm/use-dialog-form"
 import { companyNameById } from "@/lib/format"
 import type { Company, Contact, ContactInput } from "@/lib/types"
 
@@ -12,7 +12,7 @@ type ContactDialogProps = {
   contact?: Contact
   companies: Company[]
   onOpenChange: (open: boolean) => void
-  onSubmit: (input: ContactInput) => void
+  onSubmit: (input: ContactInput) => Promise<void>
 }
 
 function emptyContact(companies: Company[]): ContactInput {
@@ -33,11 +33,10 @@ export function ContactDialog({
   onOpenChange,
   onSubmit,
 }: ContactDialogProps) {
-  const [form, setForm] = useState<ContactInput>(emptyContact(companies))
-
-  useEffect(() => {
-    if (!open) return
-    setForm(
+  const { form, setForm, saving, error, fieldErrors, submit } = useDialogForm<ContactInput>(
+    open,
+    `${mode}:${contact?.id ?? "new"}`,
+    () =>
       contact
         ? {
             name: contact.name,
@@ -46,9 +45,10 @@ export function ContactDialog({
             phone: contact.phone,
             jobTitle: contact.jobTitle,
           }
-        : emptyContact(companies)
-    )
-  }, [companies, contact, open])
+        : emptyContact(companies),
+    onSubmit,
+    requireCompany
+  )
 
   return (
     <EntityDialog
@@ -67,7 +67,9 @@ export function ContactDialog({
           : "Link a person to an account and keep their details current."
       }
       onOpenChange={onOpenChange}
-      onSubmit={() => onSubmit(form)}
+      onSubmit={submit}
+      saving={saving}
+      error={error}
     >
       {mode === "view" ? (
         <DetailList
@@ -89,12 +91,14 @@ export function ContactDialog({
               label="Full name"
               value={form.name}
               required
+              error={fieldErrors.name}
               onChange={(name) => setForm((current) => ({ ...current, name }))}
             />
           </div>
           <SelectField
             label="Company"
             value={form.companyId}
+            error={fieldErrors.companyId}
             options={companies.map((company) => ({
               value: company.id,
               label: company.name,
@@ -107,6 +111,7 @@ export function ContactDialog({
             label="Job title"
             value={form.jobTitle}
             required
+            error={fieldErrors.jobTitle}
             onChange={(jobTitle) =>
               setForm((current) => ({ ...current, jobTitle }))
             }
@@ -116,12 +121,14 @@ export function ContactDialog({
             type="email"
             value={form.email}
             required
+            error={fieldErrors.email}
             onChange={(email) => setForm((current) => ({ ...current, email }))}
           />
           <TextField
             label="Phone"
             value={form.phone}
             required
+            error={fieldErrors.phone}
             onChange={(phone) => setForm((current) => ({ ...current, phone }))}
           />
         </div>

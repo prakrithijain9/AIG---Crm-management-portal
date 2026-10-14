@@ -1,6 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -14,13 +15,20 @@ import {
 type FieldProps = {
   label: string
   children: ReactNode
+  error?: string
 }
 
-export function Field({ label, children }: FieldProps) {
+export function Field({ label, children, error }: FieldProps) {
   return (
-    <div className="grid gap-2">
+    // min-w-0 lets the field shrink to its grid column instead of overflowing into the next one.
+    <div className="grid min-w-0 gap-2">
       <Label>{label}</Label>
       {children}
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -32,6 +40,7 @@ type TextFieldProps = {
   placeholder?: string
   type?: string
   required?: boolean
+  error?: string
 }
 
 export function TextField({
@@ -41,14 +50,16 @@ export function TextField({
   placeholder,
   type = "text",
   required,
+  error,
 }: TextFieldProps) {
   return (
-    <Field label={label}>
+    <Field label={label} error={error}>
       <Input
         type={type}
         value={value}
         required={required}
         placeholder={placeholder}
+        aria-invalid={error ? true : undefined}
         onChange={(event) => onChange(event.target.value)}
       />
     </Field>
@@ -62,6 +73,7 @@ type SelectFieldProps = {
   options: { value: string; label: string }[]
   placeholder?: string
   className?: string
+  error?: string
 }
 
 export function SelectField({
@@ -71,11 +83,27 @@ export function SelectField({
   options,
   placeholder,
   className,
+  error,
 }: SelectFieldProps) {
   const select = (
-    <Select value={value} onValueChange={(next) => onChange(String(next))}>
-      <SelectTrigger className={className ?? "w-full"}>
-        <SelectValue placeholder={placeholder} />
+    // `items` tells Base UI each option's label; without it the trigger shows the raw value (e.g. a UUID).
+    <Select
+      items={options}
+      value={value}
+      onValueChange={(next) => onChange(String(next))}
+    >
+      <SelectTrigger
+        className={cn("min-w-0", className ?? "w-full")}
+        aria-invalid={error ? true : undefined}
+      >
+        <SelectValue className="min-w-0">
+          {(selected: string) => (
+            <span className="truncate">
+              {options.find((option) => option.value === selected)?.label ??
+                placeholder}
+            </span>
+          )}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
@@ -89,7 +117,11 @@ export function SelectField({
 
   if (!label) return select
 
-  return <Field label={label}>{select}</Field>
+  return (
+    <Field label={label} error={error}>
+      {select}
+    </Field>
+  )
 }
 
 export function DetailList({

@@ -1,20 +1,31 @@
+# Exact versions the test suite was run against (Python 3.13.5; see .python-version).
+# To upgrade: change a version here, reinstall, and rerun the full test suite.
+
 # Web framework + ASGI server
-fastapi>=0.115
-uvicorn[standard]>=0.30
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+# FastAPI allows any Starlette >= 0.46; pinned because it provides CORS and cookie handling.
+starlette==1.7.0
 
 # Database: ORM, PostgreSQL driver (psycopg 3), migrations
-SQLAlchemy>=2.0
-psycopg[binary]>=3.2
-alembic>=1.13
+SQLAlchemy==2.1.4
+psycopg[binary]==3.3.6
+alembic==1.20.0
+# CA bundle used to verify the database server's TLS certificate (DB_SSLMODE=verify-full).
+certifi==2026.7.22
 
 # Settings / validation
-pydantic[email]>=2.7
-pydantic-settings>=2.3
+pydantic[email]==2.14.1
+# pydantic[email] allows any email-validator >= 2.0; pinned because it validates every EmailStr field.
+email-validator==2.3.0
+pydantic-settings==2.15.0
 
 # Authentication: session JWTs (HS256) and Argon2id password hashing
-PyJWT>=2.10.1,<3
-pwdlib[argon2]>=0.2.1,<0.4
+PyJWT==2.15.1
+pwdlib[argon2]==0.3.1
+# pwdlib allows any argon2-cffi >= 23.1; pinned because it computes the password hashes.
+argon2-cffi==25.1.0
 
 # Testing
-pytest>=8.0
-httpx>=0.27
+pytest==9.1.1
+httpx==0.28.1

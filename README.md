@@ -365,9 +365,9 @@ npm run build
 
 | Check | Result | Evidence |
 |---|---|---|
-| `npm run test:frontend` | **26 passed, 0 failed** | ✅ Rerun on 2026-10-15 (Node 24.21.0) |
-| Backend `pytest` | 504 passed | 📄 Recorded in [NOTES.md](https://github.com/prakrithijain9/AIG---Crm-management-portal/blob/feature/backend-api/NOTES.md#current-results), **not rerun** while writing this README because it needs a live database |
-| `tsc --noEmit`, `npm run lint`, `npm run build` | pass / 0 problems / succeeds | 📄 Recorded in NOTES.md, not rerun |
+| `npm run test:frontend` | **26 passed, 0 failed** | ✅ Rerun on 2026-11-10 (Node 24.21.0) |
+| Backend `pytest` | **504 passed, 0 failed** | ✅ Rerun on 2026-11-10 (Python 3.13.5, PostgreSQL 18.6, against the dedicated `aig_crm_test` database) |
+| `tsc --noEmit`, `npm run lint`, `npm run build` | pass / 0 problems / succeeds | ✅ Rerun on 2026-11-10 (Next.js 16.4.5) |
 
 **What the backend suite covers:**
 

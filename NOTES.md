@@ -1,8 +1,10 @@
 # AIG CRM – Backend & Integration Notes
 
-> [!WARNING]
-> **Authentication is not implemented.** All API endpoints are unauthenticated. Run the backend on
-> localhost only; it is not ready for public deployment.
+> [!IMPORTANT]
+> **Admin authentication is implemented.** Every CRM API route requires a signed-in admin (HttpOnly session
+> cookie with a signed JWT), and state-changing requests also need the CSRF token and a trusted origin; see
+> [Authentication](#authentication). Before public deployment, add login rate limiting and complete the
+> [deployment](#deployment-render--neon--vercel) steps (see [Limitations](#limitations-and-future-work)).
 
 ## How the pieces connect
 

@@ -2,6 +2,21 @@
 
 Branch: `feat/chatbot`. Read `CLAUDE.md` first. Do the phases **in order**, run the listed checks, and commit once per phase. Do not touch the VM until Phase 7, and ask the user before any VM change.
 
+## Model handoff checkpoints (MANDATORY)
+
+The user implements most phases on a cheaper model and switches to Opus for review and deploy. If you are not Opus, **stop at each checkpoint below**. End your turn with exactly this line (fill in the brackets), then do nothing further until the user replies:
+
+> **⏸ Switch to Opus now.** Reason: [checkpoint]. Then tell Opus: "Read docs/chatbot-plan.md, review [what], then continue from [next step]."
+
+| Checkpoint | When | What Opus does |
+|---|---|---|
+| **A — backend review** | After Phase 3 is committed and pytest passes | Reviews tools, proposals, the agent loop, and the auth/CSRF wiring for accuracy and security |
+| **B — eval results** | After Phase 4 runs, *or* whenever the pass rate is below 95% after one fix attempt | Diagnoses the failing cases and picks `CHAT_MODEL` |
+| **C — deploy** | Before **any** step of Phase 7 (pushing, SSH, VM) | Does the deploy on the shared VM |
+| **D — stuck** | Anytime the same error survives 2 fix attempts, or a change would touch files outside this plan | Debugs or re-plans |
+
+Phases 5, 6, and 8 need no checkpoint. Continue them directly, and say so in one line.
+
 ## Goal
 
 An assistant panel inside the CRM that can:

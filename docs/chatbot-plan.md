@@ -55,15 +55,13 @@ It must be **accurate**: every fact and number comes from the database through a
 - `backend/requirements.txt`: add a pinned `openai==<latest>`. Check the latest version with `pip index versions openai`. Pin it exactly, matching the file's style and comment.
 - `backend/app/core/config.py` — add these settings:
   - `GROQ_API_KEY: SecretStr | None` (optional; if missing, chat returns 503 "Assistant is not configured", like JWT handling).
-  - `CHAT_MODEL` (default `llama-3.3-70b-versatile`).
+  - `CHAT_MODEL` (default `openai/gpt-oss-120b`).
   - `CHAT_BASE_URL` (default Groq).
   - `CHAT_TIMEZONE` (default `Asia/Kolkata`).
   - `CHAT_MAX_TOOL_ROUNDS=5`.
   - `CHAT_RATE_LIMIT_PER_MIN=10`.
 - `backend/.env.example`: add a documented `GROQ_API_KEY=` (empty) plus the optional vars. **Never put the real key in a file.** It is already in the user's `backend/.env`.
-- **Before choosing the model**, list the models available on the key:
-  `curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"`. Read the key from the env and never echo it.
-  Candidates: `llama-3.3-70b-versatile`, `openai/gpt-oss-120b`, `moonshotai/kimi-k2-instruct`, `qwen/qwen3-32b`. The final pick is whichever scores best in the Phase 4 evals.
+- **Model availability (checked in Phase 1):** the user's Groq key lists only `openai/gpt-oss-120b`, `openai/gpt-oss-20b` and `qwen/qwen3.8-27b` as chat models. `llama-3.3-70b-versatile` is **not available**. All three returned a correct tool call in a smoke test. Default is `openai/gpt-oss-120b`; Phase 4 evals confirm the final pick.
 - **Free-tier constraint:** Groq free limits tokens per minute. Keep the system prompt and tool schemas compact (target under 1,500 tokens total), cap tool rows at 25, and drop unused fields. On HTTP 429, return a friendly "Assistant is rate-limited, try again in N s" using `retry-after`. Do not retry in a loop.
 
 ## Phase 2 — Tools (`backend/app/chat/tools.py`) and tests

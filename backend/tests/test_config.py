@@ -443,3 +443,53 @@ def test_get_settings_fails_closed_in_production_without_secret(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     with pytest.raises(ValidationError, match="JWT_SECRET_KEY is required"):
         get_settings()
+
+
+# --- Chat assistant settings -------------------------------------------------------------
+
+DUMMY_GROQ_KEY = "test-only-dummy-groq-key-" + "x" * 8
+
+
+def test_chat_settings_defaults():
+    settings = Settings(_env_file=None)
+    assert settings.groq_api_key is None
+    assert settings.chat_model == "openai/gpt-oss-120b"
+    assert settings.chat_base_url == "https://api.groq.com/openai/v1"
+    assert settings.chat_timezone == "Asia/Kolkata"
+    assert settings.chat_max_tool_rounds == 5
+    assert settings.chat_rate_limit_per_min == 10
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_groq_key_means_not_configured(blank):
+    assert Settings(_env_file=None, groq_api_key=blank).groq_api_key is None
+
+
+def test_groq_key_is_kept_secret():
+    settings = Settings(_env_file=None, groq_api_key=DUMMY_GROQ_KEY)
+    assert settings.groq_api_key.get_secret_value() == DUMMY_GROQ_KEY
+    assert DUMMY_GROQ_KEY not in repr(settings)
+
+
+def test_chat_key_is_optional_in_production(monkeypatch):
+    # The assistant is an add-on: a missing key must never stop the API from starting.
+    settings = Settings(_env_file=None, environment="production", jwt_secret_key=DUMMY_SECRET)
+    assert settings.groq_api_key is None
+
+
+def test_invalid_chat_timezone_is_rejected_without_echoing_value():
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, chat_timezone="Mars/Base")
+    assert "Mars/Base" not in str(excinfo.value)
+    assert "CHAT_TIMEZONE" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("chat_max_tool_rounds", 0),
+    ("chat_max_tool_rounds", 11),
+    ("chat_rate_limit_per_min", 0),
+    ("chat_rate_limit_per_min", 121),
+])
+def test_chat_limits_are_bounded(field, value):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: value})

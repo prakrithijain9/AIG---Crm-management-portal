@@ -6,6 +6,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import certifi
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -122,6 +123,35 @@ class Settings(BaseSettings):
     # Comma-separated origins allowed to send state-changing requests (CSRF Origin check).
     # Empty: same as CORS_ORIGINS.
     trusted_origins: str = ""
+
+    # --- Chat assistant ---------------------------------------------------------------
+
+    # Optional: without a key the chat endpoint answers 503 and the rest of the CRM is unaffected.
+    groq_api_key: SecretStr | None = None
+    chat_model: str = Field(default="openai/gpt-oss-120b", min_length=1)
+    chat_base_url: str = Field(default="https://api.groq.com/openai/v1", min_length=1)
+    # IANA zone used to resolve "today", "overdue" and "this month".
+    chat_timezone: str = "Asia/Kolkata"
+    chat_max_tool_rounds: int = Field(default=5, ge=1, le=10)
+    chat_rate_limit_per_min: int = Field(default=10, ge=1, le=120)
+
+    @field_validator("groq_api_key", mode="before")
+    @classmethod
+    def _blank_key_is_unset(cls, value: object) -> object:
+        # "GROQ_API_KEY=" in .env means "not configured".
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("chat_timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("CHAT_TIMEZONE must be a valid IANA time zone, e.g. Asia/Kolkata.") from None
+        return value
 
     @field_validator("db_sslmode", "db_sslrootcert", mode="before")
     @classmethod

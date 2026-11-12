@@ -328,8 +328,8 @@ CRM_ROUTES = [(m, p) for m, p in _api_routes() if (m, p) not in PUBLIC_API_ROUTE
 
 def test_every_crm_router_is_covered():
     prefixes = {path.split("/")[2] for _, path in CRM_ROUTES}
-    assert prefixes == {"companies", "contacts", "deals", "activities"}
-    assert len(CRM_ROUTES) == 20  # list, create, get, update, delete for each
+    assert prefixes == {"companies", "contacts", "deals", "activities", "chat"}
+    assert len(CRM_ROUTES) == 21  # list, create, get, update, delete for each CRM entity, plus POST /api/chat
 
 
 @pytest.mark.parametrize(("method", "path"), CRM_ROUTES)

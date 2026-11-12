@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.activities import router as activities_router
 from app.api.auth import require_admin
 from app.api.auth import router as auth_router
+from app.api.chat import router as chat_router
 from app.api.companies import router as companies_router
 from app.api.contacts import router as contacts_router
 from app.api.deals import router as deals_router
@@ -39,5 +40,5 @@ app.include_router(health_router)
 app.include_router(auth_router, prefix="/api")
 
 # Every CRM data route requires a signed-in admin (and CSRF checks on writes).
-for router in (companies_router, contacts_router, deals_router, activities_router):
+for router in (companies_router, contacts_router, deals_router, activities_router, chat_router):
     app.include_router(router, prefix="/api", dependencies=[Depends(require_admin)])

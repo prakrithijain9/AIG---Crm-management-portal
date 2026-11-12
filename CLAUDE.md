@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `AGENTS.md` warns this Next.js (16.4) has breaking changes vs. training data. Read the guide in `node_modules/next/dist/docs/` before writing Next code (run `npm install` first if `node_modules` is absent). `next.config.ts` enables `cacheComponents`, `partialPrefetching`, and `experimental.agentFeedback`; `agentFeedback` makes `next dev` rewrite the `AGENTS.md` blocks, so commit `AGENTS.md` with your work.
 - **Branches differ a lot.** This branch (`Vishnu-merged`, from `feature/backend-api`) is the full stack: Next.js + FastAPI + PostgreSQL + admin auth. `origin/main` is still the old frontend-only version with in-browser mock data and has diverged from this branch (it has README commits this branch lacks). Check which branch you are on before assuming a backend exists.
-- `NOTES.md` is the detailed backend reference (endpoint behaviour, auth design, seed safety rules, deployment). `README.md` and `NOTES.md` describe a planned Render + Neon + Vercel deployment; the real production host is a Hostinger VM (see Deployment below).
+- `NOTES.md` is the detailed backend reference (endpoint behaviour, auth design, seed safety rules, deployment). `README.md` and `NOTES.md` still describe a planned Render + Neon + Vercel deployment. That is **obsolete**: Vercel, Render and Neon are dropped, and the only production host is the Hostinger VM (see Deployment below).
 
 ## Commands
 

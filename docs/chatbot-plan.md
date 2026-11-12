@@ -241,6 +241,7 @@ No LLM involved. It's a `Dialog` with an input listing the 5 pages plus fuzzy ma
   - a navigation button that opens a filtered page and a record dialog,
   - the 503 and 429 messages.
 - Update `NOTES.md` (chat section: config vars, architecture, eval command), `backend/.env.example`, and `CLAUDE.md` (a short architecture line).
+- Separate docs commit, not mixed into chatbot code: replace the Render + Neon + Vercel deployment sections in `README.md` and `NOTES.md` with the Hostinger VM Docker Compose setup, and remove Vercel mentions. Vercel is dropped.
 
 ## Known risks
 

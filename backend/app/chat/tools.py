@@ -352,8 +352,8 @@ def search(db: Session, args: SearchArgs, today: date) -> dict:
     columns = {
         "company": (Company.name,),
         "contact": (Contact.name, Contact.email),
-        "deal": (Deal.title,),
-        "activity": (Activity.subject,),
+        "deal": (Deal.title, Company.name),  # "the Summit deal" names the company
+        "activity": (Activity.subject, Company.name),
     }
     matches: list[dict] = []
     sources: list[dict] = []

@@ -197,6 +197,12 @@ def test_empty_model_reply_falls_back(client, api_app):
     assert ask(client).json()["reply"] == GAVE_UP
 
 
+def test_unicode_hyphens_in_the_reply_become_ascii(client, api_app):
+    # "Shop‑floor" looks right but would not match "Shop-floor" if the user copies it into search.
+    use_llm(api_app, FakeLLM(reply("Shop‑floor quality system – Negotiation")))
+    assert ask(client).json()["reply"] == "Shop-floor quality system - Negotiation"
+
+
 # --- input validation -----------------------------------------------------------------
 
 

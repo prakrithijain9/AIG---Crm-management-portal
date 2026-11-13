@@ -182,6 +182,14 @@ def test_search_entity_filter_and_no_match(seeded):
     assert call(seeded, "search", query="zzz-no-such-thing")["matches"] == []
 
 
+def test_deal_search_matches_its_company_name(seeded):
+    # "the Summit deal": the user names the company, not the deal title.
+    out = call(seeded, "search", query="Summit", entity="deal")
+    summit = next(c["id"] for c in DATA["companies"] if c["name"] == "Summit Retail Group")
+    expected = sorted(d["title"] for d in DATA["deals"] if d["companyId"] == summit)
+    assert expected and sorted(m["label"] for m in out["matches"]) == expected
+
+
 def test_search_treats_percent_literally(seeded):
     assert call(seeded, "search", query="%")["matches"] == []
 

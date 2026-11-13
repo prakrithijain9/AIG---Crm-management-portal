@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 MAX_SOURCES = 10
 MAX_CALLS_PER_ROUND = 8
 GAVE_UP = "I couldn't complete that — try rephrasing."
+# Models like U+2011 (non-breaking hyphen); a name copied from the reply must still match in search.
+HYPHENS = str.maketrans(dict.fromkeys(map(chr, range(0x2010, 0x2014)), "-"))  # U+2010..U+2013
 
 
 class ChatBusy(Exception):
@@ -90,7 +92,7 @@ def run_chat(
 
         reply = response.choices[0].message
         if not reply.tool_calls:
-            result.reply = (reply.content or "").strip() or GAVE_UP
+            result.reply = (reply.content or "").translate(HYPHENS).strip() or GAVE_UP
             return result
 
         messages.append(_assistant_message(reply))

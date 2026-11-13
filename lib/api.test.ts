@@ -244,4 +244,47 @@ describe("sign-in and session handling", () => {
     await rejection(api.auth.logout())
     assert.equal(hasCsrfToken(), false)
   })
+
+  it("sends chat messages with history and the CSRF token", async () => {
+    mockFetch(json(SESSION_BODY))
+    await api.auth.login("admin", "pw")
+    const reply = { reply: "Hi", proposals: [], actions: [], sources: [] }
+    mockFetch(json(reply))
+    const history = [{ role: "user" as const, content: "earlier" }]
+    assert.deepEqual(await api.chat.send("hello", history), reply)
+    assert.equal(calls[0].url, "/api/chat")
+    assert.equal(calls[0].init?.method, "POST")
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { message: "hello", history })
+    assert.equal(headersOf(calls[0])[CSRF_HEADER_NAME], "csrf-from-server")
+  })
+
+  it("passes the assistant's 503 and 429 messages through", async () => {
+    mockFetch(json({ detail: "The assistant is not configured." }, 503))
+    const notConfigured = await rejection(api.chat.send("hi", []))
+    assert.equal(notConfigured.status, 503)
+    assert.equal(notConfigured.message, "The assistant is not configured.")
+
+    mockFetch(json({ detail: "The assistant is busy right now. Try again in a minute." }, 429))
+    const busy = await rejection(api.chat.send("hi", []))
+    assert.equal(busy.status, 429)
+    assert.match(busy.message, /busy/)
+  })
+
+  it("signs out on 401 from the assistant like any other CRM call", async () => {
+    let expired = 0
+    setUnauthorizedHandler(() => expired++)
+    mockFetch(json({ detail: "Not authenticated" }, 401))
+    assert.equal((await rejection(api.chat.send("hi", []))).status, 401)
+    assert.equal(expired, 1)
+  })
+
+  it("reports a cancelled chat as a plain abort, not a network error", async () => {
+    const controller = new AbortController()
+    controller.abort()
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException("aborted", "AbortError")
+      throw new Error("should have been aborted")
+    }) as typeof fetch
+    await assert.rejects(api.chat.send("hi", [], controller.signal), { name: "AbortError" })
+  })
 })

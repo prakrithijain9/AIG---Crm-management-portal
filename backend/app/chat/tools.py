@@ -572,6 +572,10 @@ def propose_update(db: Session, args: ProposeUpdateArgs, today: date) -> dict:
     }
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
 def propose_delete(db: Session, args: ProposeDeleteArgs, today: date) -> dict:
     obj = db.get(MODELS[args.entity], args.id)
     if obj is None:
@@ -580,11 +584,13 @@ def propose_delete(db: Session, args: ProposeDeleteArgs, today: date) -> dict:
     summary = f'Delete {args.entity} "{_label(args.entity, obj)}"'
     if args.entity == "company":
         summary += (
-            f" (also deletes {impact['contacts']} contacts, {impact['deals']} deals, "
-            f"{impact['activities']} activities)"
+            f" (also deletes {_plural(impact['contacts'], 'contact', 'contacts')}, "
+            f"{_plural(impact['deals'], 'deal', 'deals')}, "
+            f"{_plural(impact['activities'], 'activity', 'activities')})"
         )
     elif args.entity == "contact":
-        summary += f" ({impact['activitiesLosingContact']} activities will lose this contact)"
+        lose = impact["activitiesLosingContact"]
+        summary += f" ({_plural(lose, 'activity', 'activities')} will lose this contact)"
     return {
         "proposalId": str(uuid.uuid4()),
         "op": "delete",

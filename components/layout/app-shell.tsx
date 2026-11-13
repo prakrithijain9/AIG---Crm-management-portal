@@ -3,6 +3,7 @@
 import { useEffect, type ReactNode } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react"
+import { ChatPanel } from "@/components/chat/chat-panel"
 import { useSession } from "@/components/auth/session-provider"
 import { CrmProvider } from "@/components/crm/crm-provider"
 import { DataGate } from "@/components/crm/data-gate"
@@ -38,6 +39,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </main>
+        {/* Inside CrmProvider (proposal cards use its mutations); one instance, so the chat survives navigation. */}
+        {authenticated ? <ChatPanel /> : null}
       </div>
     </CrmProvider>
   )

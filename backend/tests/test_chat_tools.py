@@ -336,6 +336,21 @@ def test_propose_delete_contact_reports_activities_losing_it(seeded):
     assert "No contact" in call(seeded, "propose_delete", entity="contact", id=str(uuid.uuid4()))["error"]
 
 
+def test_delete_summaries_use_correct_singular_and_plural(seeded):
+    # Harbor & Co. has exactly one contact, one deal and one activity in the seed data.
+    harbor = cid(seeded, "Harbor & Co.")
+    assert [len([r for r in DATA[k] if r["companyId"] == "cmp-6"]) for k in ("contacts", "deals", "activities")] == [1, 1, 1]
+    summary = call(seeded, "propose_delete", entity="company", id=harbor)["summary"]
+    assert summary.endswith("(also deletes 1 contact, 1 deal, 1 activity)")
+
+    northwind = call(seeded, "propose_delete", entity="company", id=cid(seeded, "Northwind Logistics"))["summary"]
+    assert "2 contacts" in northwind and "1 contact," not in northwind
+
+    contact = seeded.scalar(select(Contact).where(Contact.email == "david.hale@harbor.example"))
+    one = call(seeded, "propose_delete", entity="contact", id=str(contact.id))["summary"]
+    assert one.endswith("(1 activity will lose this contact)")
+
+
 # --- navigation -----------------------------------------------------------------------
 
 

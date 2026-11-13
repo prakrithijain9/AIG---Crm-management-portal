@@ -1,3 +1,4 @@
+import type { ChatReply, ChatTurn } from "@/lib/chat"
 import type {
   Activity,
   ActivityInput,
@@ -200,8 +201,32 @@ function resource<T, TInput>(path: string) {
   }
 }
 
+const CHAT_TIMEOUT_MS = 75_000 // the server gives the model 30s per call and up to 5 rounds
+
+const chat = {
+  /**
+   * Ask the assistant. `history` is the previous turns (the server keeps no state).
+   * Throws ApiError: 503 not configured, 429 busy or too many messages, 502 provider down.
+   */
+  async send(message: string, history: ChatTurn[], signal?: AbortSignal): Promise<ChatReply> {
+    const timeout = AbortSignal.timeout(CHAT_TIMEOUT_MS)
+    try {
+      const response = await request("/chat", {
+        method: "POST",
+        body: JSON.stringify({ message, history }),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      })
+      return (await response.json()) as ChatReply
+    } catch (error) {
+      if (timeout.aborted) throw new ApiError("The assistant took too long to answer. Try again.", 0)
+      throw error
+    }
+  },
+}
+
 export const api = {
   auth,
+  chat,
   companies: resource<Company, CompanyInput>("/companies"),
   contacts: resource<Contact, ContactInput>("/contacts"),
   deals: resource<Deal, DealInput>("/deals"),

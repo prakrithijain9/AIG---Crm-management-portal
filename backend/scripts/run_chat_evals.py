@@ -221,24 +221,29 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows consoles default to cp1252
 
     settings = get_settings()
-    if settings.groq_api_key is None:
-        print("GROQ_API_KEY is not set in backend/.env")
-        return 2
     cases = yaml.safe_load(CASES.read_text(encoding="utf-8"))
     if args.only:
         cases = [c for c in cases if args.only in c["id"]]
     today = datetime.now(ZoneInfo(settings.chat_timezone)).date()
     # More retries than the app: evals should wait out the per-minute limit, not fail on it.
-    client = openai.OpenAI(
-        api_key=settings.groq_api_key.get_secret_value(),
-        base_url=settings.chat_base_url,
-        timeout=60,
-        max_retries=6,
-    )
+    def client_for(model: str):
+        if model.startswith("gemini"):
+            if settings.gemini_api_key is None:
+                raise SystemExit("GEMINI_API_KEY is not set in backend/.env")
+            key, base = settings.gemini_api_key, settings.chat_fallback_base_url
+        else:
+            if settings.groq_api_key is None:
+                raise SystemExit("GROQ_API_KEY is not set in backend/.env")
+            key, base = settings.groq_api_key, settings.chat_base_url
+        return openai.OpenAI(api_key=key.get_secret_value(), base_url=base, timeout=60, max_retries=6)
+
+    clients: dict[str, Any] = {}
 
     summary = []
     for model in args.model or [settings.chat_model]:
         model_settings = settings.model_copy(update={"chat_model": model})
+        provider = "gemini" if model.startswith("gemini") else "groq"
+        client = clients.setdefault(provider, client_for(model))
         passed = errored = 0
         print(f"\n### {model}  ({len(cases)} cases, today={today})", flush=True)
         for case in cases:

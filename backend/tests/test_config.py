@@ -471,6 +471,27 @@ def test_groq_key_is_kept_secret():
     assert DUMMY_GROQ_KEY not in repr(settings)
 
 
+DUMMY_GEMINI_KEY = "test-only-dummy-gemini-key-" + "y" * 8
+
+
+def test_fallback_settings_defaults():
+    settings = Settings(_env_file=None)
+    assert settings.gemini_api_key is None
+    assert settings.chat_fallback_model == "gemini-2.5-flash-lite"
+    assert settings.chat_fallback_base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_gemini_key_means_not_configured(blank):
+    assert Settings(_env_file=None, gemini_api_key=blank).gemini_api_key is None
+
+
+def test_gemini_key_is_kept_secret():
+    settings = Settings(_env_file=None, gemini_api_key=DUMMY_GEMINI_KEY)
+    assert settings.gemini_api_key.get_secret_value() == DUMMY_GEMINI_KEY
+    assert DUMMY_GEMINI_KEY not in repr(settings)
+
+
 def test_chat_key_is_optional_in_production(monkeypatch):
     # The assistant is an add-on: a missing key must never stop the API from starting.
     settings = Settings(_env_file=None, environment="production", jwt_secret_key=DUMMY_SECRET)

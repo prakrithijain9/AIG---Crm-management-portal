@@ -10,7 +10,7 @@ import httpx
 import openai
 import pytest
 
-from app.api.chat import get_llm_client
+from app.api.chat import get_fallback_client, get_llm_client
 from app.chat.agent import GAVE_UP
 from app.chat.ratelimit import chat_limiter
 from app.core.config import get_settings
@@ -55,6 +55,11 @@ def use_llm(api_app, fake):
     return fake
 
 
+def use_fallback(api_app, fake):
+    api_app.dependency_overrides[get_fallback_client] = lambda: fake
+    return fake
+
+
 def with_settings(api_app, auth_settings, **update):
     api_app.dependency_overrides[get_settings] = lambda: auth_settings.model_copy(update=update)
 
@@ -69,8 +74,11 @@ def _isolation(api_app):
 
     tripwire = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=no_network)))
     api_app.dependency_overrides[get_llm_client] = lambda: tripwire
+    # No fallback unless a test asks for one: backend/.env may hold a real Gemini key too.
+    api_app.dependency_overrides[get_fallback_client] = lambda: None
     yield
     api_app.dependency_overrides.pop(get_llm_client, None)
+    api_app.dependency_overrides.pop(get_fallback_client, None)
     chat_limiter.reset()
 
 
@@ -232,11 +240,97 @@ def test_invalid_requests_are_rejected_before_any_llm_call(client, payload):
 # --- failure modes --------------------------------------------------------------------
 
 
-def test_missing_api_key_returns_503(client, api_app, auth_settings):
-    api_app.dependency_overrides.pop(get_llm_client)  # use the real dependency, which checks the key
-    with_settings(api_app, auth_settings, groq_api_key=None)
+def test_no_keys_at_all_returns_503(client, api_app, auth_settings):
+    # Use the real dependencies, which check the keys.
+    api_app.dependency_overrides.pop(get_llm_client)
+    api_app.dependency_overrides.pop(get_fallback_client)
+    with_settings(api_app, auth_settings, groq_api_key=None, gemini_api_key=None)
     response = ask(client)
     assert response.status_code == 503 and "not configured" in response.json()["detail"]
+
+
+def test_real_dependencies_build_clients_only_for_configured_keys(auth_settings):
+    from pydantic import SecretStr
+
+    none = auth_settings.model_copy(update={"groq_api_key": None, "gemini_api_key": None})
+    assert get_llm_client(none) is None and get_fallback_client(none) is None
+    both = auth_settings.model_copy(
+        update={"groq_api_key": SecretStr("g" * 12), "gemini_api_key": SecretStr("m" * 12)}
+    )
+    primary, fallback = get_llm_client(both), get_fallback_client(both)
+    assert str(primary.base_url).startswith(both.chat_base_url.rstrip("/"))
+    assert str(fallback.base_url).startswith(both.chat_fallback_base_url.rstrip("/"))
+
+
+# --- fallback provider ----------------------------------------------------------------
+
+
+def _rate_limited():
+    request = httpx.Request("POST", "http://llm.invalid")
+    return openai.RateLimitError("tokens per day", response=httpx.Response(429, request=request), body=None)
+
+
+def _outage():
+    return openai.APIConnectionError(request=httpx.Request("POST", "http://llm.invalid"))
+
+
+def test_primary_success_never_touches_the_fallback(client, api_app):
+    use_llm(api_app, FakeLLM(reply("from primary")))
+    fallback = use_fallback(api_app, FakeLLM())  # no scripted steps: any call fails the test
+    assert ask(client).json()["reply"] == "from primary"
+    assert fallback.requests == []
+
+
+@pytest.mark.parametrize("failure", [_rate_limited, _outage], ids=["rate-limited", "outage"])
+def test_fallback_answers_when_the_primary_fails(client, api_app, auth_settings, failure):
+    use_llm(api_app, FakeLLM(failure()))
+    fallback = use_fallback(api_app, FakeLLM(reply("from fallback")))
+    response = ask(client)
+    assert response.status_code == 200 and response.json()["reply"] == "from fallback"
+    assert fallback.requests[0]["model"] == auth_settings.chat_fallback_model
+
+
+def test_fallback_restarts_the_turn_cleanly_after_a_partial_primary_run(client, api_app):
+    company = create(client, "/api/companies", company_payload(name="Summit Retail Group"))
+    deal = create(client, "/api/deals", deal_payload(company["id"], title="Store rollout", stage="Proposal"))
+    # The primary gets as far as proposing a change, then dies on the next round.
+    use_llm(
+        api_app,
+        FakeLLM(
+            reply(None, tool_call("propose_update", "p1", entity="deal", id=deal["id"], changes={"stage": "Won"})),
+            _rate_limited(),
+        ),
+    )
+    fallback = use_fallback(
+        api_app,
+        FakeLLM(
+            reply(None, tool_call("propose_update", "f1", entity="deal", id=deal["id"], changes={"stage": "Won"})),
+            reply("Ready to confirm."),
+        ),
+    )
+    body = ask(client, "Mark the Summit rollout as won").json()
+    assert body["reply"] == "Ready to confirm."
+    assert len(body["proposals"]) == 1  # the primary's half-finished proposal is not duplicated
+    first = fallback.requests[0]["messages"]
+    assert [m["role"] for m in first] == ["system", "user"]  # fresh start, no leftover tool messages
+
+
+def test_only_the_fallback_configured_still_answers(client, api_app):
+    api_app.dependency_overrides[get_llm_client] = lambda: None
+    use_fallback(api_app, FakeLLM(reply("from gemini")))
+    assert ask(client).json()["reply"] == "from gemini"
+
+
+def test_both_providers_failing_reports_busy_if_either_was_rate_limited(client, api_app):
+    use_llm(api_app, FakeLLM(_rate_limited()))
+    use_fallback(api_app, FakeLLM(_outage()))
+    assert ask(client).status_code == 429
+
+
+def test_both_providers_down_reports_502(client, api_app):
+    use_llm(api_app, FakeLLM(_outage()))
+    use_fallback(api_app, FakeLLM(_outage()))
+    assert ask(client).status_code == 502
 
 
 def test_provider_rate_limit_maps_to_a_friendly_429(client, api_app):

@@ -58,7 +58,46 @@ def _assistant_message(message: Any) -> dict:
 
 
 def run_chat(
+    client: Any | None,
+    settings: Settings,
+    db: Session,
+    message: str,
+    history: list[dict],
+    today: date,
+    fallback: Any | None = None,
+) -> ChatResult:
+    """Answer on the primary model; if it is rate limited or down, redo the whole turn on the fallback.
+
+    Safe to repeat: tools only read, and proposals write nothing until the user confirms. `client`
+    may be None when only the fallback is configured.
+    """
+    targets = []
+    if client is not None:
+        targets.append((client, settings.chat_model, "primary"))
+    if fallback is not None:
+        targets.append((fallback, settings.chat_fallback_model, "fallback"))
+
+    busy = False
+    for target, model, label in targets:
+        try:
+            result = _attempt(target, model, settings, db, message, history, today)
+        except ChatBusy:
+            busy = True
+            logger.warning("%s model is rate limited", label)
+            continue
+        except ChatFailed:
+            logger.warning("%s model failed", label)
+            continue
+        if label == "fallback" and client is not None:
+            logger.info("Answered on the fallback model")
+        return result
+    # Every model failed. "Busy" wins: the user should wait and retry, not assume an outage.
+    raise ChatBusy if busy else ChatFailed
+
+
+def _attempt(
     client: Any,
+    model: str,
     settings: Settings,
     db: Session,
     message: str,
@@ -77,7 +116,7 @@ def run_chat(
     for _ in range(settings.chat_max_tool_rounds):
         try:
             response = client.chat.completions.create(
-                model=settings.chat_model,
+                model=model,
                 messages=messages,
                 tools=specs,
                 tool_choice="auto",

@@ -130,15 +130,23 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     chat_model: str = Field(default="openai/gpt-oss-120b", min_length=1)
     chat_base_url: str = Field(default="https://api.groq.com/openai/v1", min_length=1)
+    # Optional second provider (Gemini, OpenAI-compatible endpoint). Used when the primary is rate
+    # limited (Groq's free tier caps tokens per day) or unreachable. With only this key set, the
+    # assistant runs on it alone.
+    gemini_api_key: SecretStr | None = None
+    chat_fallback_model: str = Field(default="gemini-2.5-flash-lite", min_length=1)
+    chat_fallback_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/", min_length=1
+    )
     # IANA zone used to resolve "today", "overdue" and "this month".
     chat_timezone: str = "Asia/Kolkata"
     chat_max_tool_rounds: int = Field(default=5, ge=1, le=10)
     chat_rate_limit_per_min: int = Field(default=10, ge=1, le=120)
 
-    @field_validator("groq_api_key", mode="before")
+    @field_validator("groq_api_key", "gemini_api_key", mode="before")
     @classmethod
     def _blank_key_is_unset(cls, value: object) -> object:
-        # "GROQ_API_KEY=" in .env means "not configured".
+        # "GROQ_API_KEY=" (or GEMINI_API_KEY=) in .env means "not configured".
         if isinstance(value, str):
             value = value.strip()
             return value or None

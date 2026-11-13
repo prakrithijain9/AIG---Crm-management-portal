@@ -10,6 +10,7 @@ import { RowActions } from "@/components/crm/row-actions"
 import { SelectField } from "@/components/crm/form-fields"
 import { StatusBadge } from "@/components/crm/status-badge"
 import { Toolbar } from "@/components/crm/toolbar"
+import { useOpenFromUrl, usePageParams } from "@/components/crm/use-page-params"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -20,6 +21,7 @@ import {
 } from "@/lib/format"
 import type { Activity, ActivityStatus } from "@/lib/types"
 import { activityStatuses } from "@/lib/types"
+import { choiceParam } from "@/lib/url-params"
 
 type DialogState =
   | { open: false }
@@ -35,10 +37,15 @@ export default function ActivitiesPage() {
     updateActivity,
     deleteActivity,
   } = useCrm()
-  const [search, setSearch] = useState("")
-  const [status, setStatus] = useState("all")
+  const { searchParams, setParams } = usePageParams()
+  const search = searchParams.get("search") ?? ""
+  const status = choiceParam(searchParams.get("status"), activityStatuses)
+  const setSearch = (value: string) => setParams({ search: value })
+  const setStatus = (value: string) => setParams({ status: value })
   const [dialog, setDialog] = useState<DialogState>({ open: false })
   const [pendingDelete, setPendingDelete] = useState<Activity | null>(null)
+
+  useOpenFromUrl(activities, (activity) => setDialog({ open: true, mode: "view", activity }))
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase()

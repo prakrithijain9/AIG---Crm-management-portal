@@ -10,12 +10,14 @@ import { RowActions } from "@/components/crm/row-actions"
 import { SelectField } from "@/components/crm/form-fields"
 import { StatusBadge } from "@/components/crm/status-badge"
 import { Toolbar } from "@/components/crm/toolbar"
+import { useOpenFromUrl, usePageParams } from "@/components/crm/use-page-params"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { companyNameById, formatCurrency, formatDate } from "@/lib/format"
 import { dealStages, type Deal, type DealStage } from "@/lib/types"
+import { choiceParam } from "@/lib/url-params"
 
 type DialogState =
   | { open: false }
@@ -24,10 +26,23 @@ type DialogState =
 
 export default function DealsPage() {
   const { companies, deals, addDeal, updateDeal, deleteDeal } = useCrm()
-  const [search, setSearch] = useState("")
-  const [stage, setStage] = useState("all")
+  const { searchParams, setParams } = usePageParams()
+  const search = searchParams.get("search") ?? ""
+  const stage = choiceParam(searchParams.get("stage"), dealStages)
+  const setSearch = (value: string) => setParams({ search: value })
+  const setStage = (value: string) => setParams({ stage: value })
+  // The stage filter lives on the Table tab, so a link with ?stage= opens that tab.
+  const [tab, setTab] = useState(stage === "all" ? "pipeline" : "table")
+  const [seenStage, setSeenStage] = useState(stage)
+  if (stage !== seenStage) {
+    // Adjusting state during render (not in an effect) when the URL's stage changes under us.
+    setSeenStage(stage)
+    if (stage !== "all") setTab("table")
+  }
   const [dialog, setDialog] = useState<DialogState>({ open: false })
   const [pendingDelete, setPendingDelete] = useState<Deal | null>(null)
+
+  useOpenFromUrl(deals, (deal) => setDialog({ open: true, mode: "view", deal }))
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase()
@@ -89,7 +104,7 @@ export default function DealsPage() {
         }
       />
 
-      <Tabs defaultValue="pipeline">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
           <TabsTrigger value="table">Table</TabsTrigger>

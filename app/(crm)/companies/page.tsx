@@ -10,11 +10,13 @@ import { RowActions } from "@/components/crm/row-actions"
 import { SelectField } from "@/components/crm/form-fields"
 import { StatusBadge } from "@/components/crm/status-badge"
 import { Toolbar } from "@/components/crm/toolbar"
+import { useOpenFromUrl, usePageParams } from "@/components/crm/use-page-params"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import type { Company, CompanyStatus } from "@/lib/types"
 import { companyStatuses } from "@/lib/types"
+import { choiceParam } from "@/lib/url-params"
 
 type DialogState =
   | { open: false }
@@ -23,10 +25,15 @@ type DialogState =
 
 export default function CompaniesPage() {
   const { companies, addCompany, updateCompany, deleteCompany } = useCrm()
-  const [search, setSearch] = useState("")
-  const [status, setStatus] = useState("all")
+  const { searchParams, setParams } = usePageParams()
+  const search = searchParams.get("search") ?? ""
+  const status = choiceParam(searchParams.get("status"), companyStatuses)
+  const setSearch = (value: string) => setParams({ search: value })
+  const setStatus = (value: string) => setParams({ status: value })
   const [dialog, setDialog] = useState<DialogState>({ open: false })
   const [pendingDelete, setPendingDelete] = useState<Company | null>(null)
+
+  useOpenFromUrl(companies, (company) => setDialog({ open: true, mode: "view", company }))
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase()

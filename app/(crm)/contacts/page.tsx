@@ -8,6 +8,7 @@ import { useCrm } from "@/components/crm/crm-provider"
 import { DataTable, type Column } from "@/components/crm/data-table"
 import { RowActions } from "@/components/crm/row-actions"
 import { Toolbar } from "@/components/crm/toolbar"
+import { useOpenFromUrl, usePageParams } from "@/components/crm/use-page-params"
 import { PageHeader } from "@/components/layout/page-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -22,9 +23,13 @@ type DialogState =
 export default function ContactsPage() {
   const { companies, contacts, addContact, updateContact, deleteContact } =
     useCrm()
-  const [search, setSearch] = useState("")
+  const { searchParams, setParams } = usePageParams()
+  const search = searchParams.get("search") ?? ""
+  const setSearch = (value: string) => setParams({ search: value })
   const [dialog, setDialog] = useState<DialogState>({ open: false })
   const [pendingDelete, setPendingDelete] = useState<Contact | null>(null)
+
+  useOpenFromUrl(contacts, (contact) => setDialog({ open: true, mode: "view", contact }))
 
   const filtered = useMemo(() => {
     const query = search.toLowerCase()

@@ -7,6 +7,8 @@ results: they contain CRM data.
 
 import json
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -29,6 +31,10 @@ HYPHENS = str.maketrans(dict.fromkeys(map(chr, range(0x2010, 0x2014)), "-"))  # 
 
 class ChatBusy(Exception):
     """The LLM provider is rate limiting us."""
+
+    def __init__(self, retry_after: float | None = None):
+        super().__init__()
+        self.retry_after = retry_after
 
 
 class ChatFailed(Exception):
@@ -57,6 +63,51 @@ def _assistant_message(message: Any) -> dict:
     return out
 
 
+@dataclass(frozen=True)
+class LlmTarget:
+    """One model to try: an OpenAI-SDK-compatible client, the model id, and a label for logs."""
+
+    client: Any
+    model: str
+    label: str
+
+
+class Cooldowns:
+    """Models that just said "rate limited" are skipped until the provider says they are free again.
+
+    Without this, once a model's daily cap is gone every question would first waste a request on it.
+    In process memory only, so each uvicorn worker learns separately; that is fine, it is an optimisation.
+    """
+
+    DEFAULT_SECONDS = 60.0  # Gemini sends no retry-after
+    MIN_SECONDS = 5.0
+    MAX_SECONDS = 900.0
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._until: dict[str, float] = {}
+
+    def block(self, label: str, seconds: float | None) -> None:
+        wait = self.DEFAULT_SECONDS if seconds is None else seconds
+        self._until[label] = self._clock() + min(max(wait, self.MIN_SECONDS), self.MAX_SECONDS)
+
+    def active(self, label: str) -> bool:
+        return self._until.get(label, 0.0) > self._clock()
+
+    def reset(self) -> None:
+        self._until.clear()
+
+
+cooldowns = Cooldowns()
+
+
+def _retry_after(exc: openai.RateLimitError) -> float | None:
+    try:
+        return float(exc.response.headers.get("retry-after"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def run_chat(
     client: Any | None,
     settings: Settings,
@@ -64,32 +115,35 @@ def run_chat(
     message: str,
     history: list[dict],
     today: date,
-    fallback: Any | None = None,
+    fallbacks: list[LlmTarget] | None = None,
 ) -> ChatResult:
-    """Answer on the primary model; if it is rate limited or down, redo the whole turn on the fallback.
+    """Answer on the primary model; if it is rate limited or down, redo the whole turn on the next one.
 
     Safe to repeat: tools only read, and proposals write nothing until the user confirms. `client`
-    may be None when only the fallback is configured.
+    may be None when only fallbacks are configured.
     """
-    targets = []
+    targets: list[LlmTarget] = []
     if client is not None:
-        targets.append((client, settings.chat_model, "primary"))
-    if fallback is not None:
-        targets.append((fallback, settings.chat_fallback_model, "fallback"))
+        targets.append(LlmTarget(client, settings.chat_model, f"groq:{settings.chat_model}"))
+    targets.extend(fallbacks or [])
 
     busy = False
-    for target, model, label in targets:
+    for index, target in enumerate(targets):
+        if cooldowns.active(target.label):
+            busy = True  # known to be rate limited right now; do not spend a request finding out again
+            continue
         try:
-            result = _attempt(target, model, settings, db, message, history, today)
-        except ChatBusy:
+            result = _attempt(target.client, target.model, settings, db, message, history, today)
+        except ChatBusy as exc:
             busy = True
-            logger.warning("%s model is rate limited", label)
+            cooldowns.block(target.label, exc.retry_after)
+            logger.warning("%s is rate limited", target.label)
             continue
         except ChatFailed:
-            logger.warning("%s model failed", label)
+            logger.warning("%s failed", target.label)
             continue
-        if label == "fallback" and client is not None:
-            logger.info("Answered on the fallback model")
+        if index > 0:
+            logger.info("Answered on %s", target.label)
         return result
     # Every model failed. "Busy" wins: the user should wait and retry, not assume an outage.
     raise ChatBusy if busy else ChatFailed
@@ -122,8 +176,8 @@ def _attempt(
                 tool_choice="auto",
                 temperature=0,
             )
-        except openai.RateLimitError:
-            raise ChatBusy from None
+        except openai.RateLimitError as exc:
+            raise ChatBusy(_retry_after(exc)) from None
         except openai.OpenAIError as exc:
             # Type only: the message can echo request content.
             logger.warning("LLM call failed: %s", type(exc).__name__)

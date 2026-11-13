@@ -226,11 +226,11 @@ def main() -> int:
         cases = [c for c in cases if args.only in c["id"]]
     today = datetime.now(ZoneInfo(settings.chat_timezone)).date()
     # More retries than the app: evals should wait out the per-minute limit, not fail on it.
-    def client_for(model: str):
-        if model.startswith("gemini"):
+    def client_for(provider: str):
+        if provider == "gemini":
             if settings.gemini_api_key is None:
                 raise SystemExit("GEMINI_API_KEY is not set in backend/.env")
-            key, base = settings.gemini_api_key, settings.chat_fallback_base_url
+            key, base = settings.gemini_api_key, settings.gemini_base_url
         else:
             if settings.groq_api_key is None:
                 raise SystemExit("GROQ_API_KEY is not set in backend/.env")
@@ -240,10 +240,16 @@ def main() -> int:
     clients: dict[str, Any] = {}
 
     summary = []
-    for model in args.model or [settings.chat_model]:
+    for spec in args.model or [settings.chat_model]:
+        # "provider:model" (e.g. gemini:gemini-2.5-flash); bare names are Groq unless they start with "gemini".
+        if spec.split(":", 1)[0] in ("groq", "gemini"):
+            provider, model = spec.split(":", 1)
+        else:
+            provider, model = ("gemini" if spec.startswith("gemini") else "groq"), spec
         model_settings = settings.model_copy(update={"chat_model": model})
-        provider = "gemini" if model.startswith("gemini") else "groq"
-        client = clients.setdefault(provider, client_for(model))
+        if provider not in clients:
+            clients[provider] = client_for(provider)
+        client = clients[provider]
         passed = errored = 0
         print(f"\n### {model}  ({len(cases)} cases, today={today})", flush=True)
         for case in cases:

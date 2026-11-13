@@ -10,8 +10,9 @@ from openai import OpenAI
 
 from app.api.auth import AppSettings, CurrentSession, require_admin
 from app.api.common import DbSession
-from app.chat.agent import ChatBusy, ChatFailed, run_chat
+from app.chat.agent import ChatBusy, ChatFailed, LlmTarget, run_chat
 from app.chat.ratelimit import chat_limiter
+from app.core.config import parse_model_chain
 from app.schemas.chat import ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
@@ -33,16 +34,24 @@ def get_llm_client(settings: AppSettings) -> OpenAI | None:
     )
 
 
-def get_fallback_client(settings: AppSettings) -> OpenAI | None:
-    """The same SDK pointed at the fallback provider (Gemini), or None if it has no key. Tests override this."""
-    if settings.gemini_api_key is None:
-        return None
-    return OpenAI(
-        api_key=settings.gemini_api_key.get_secret_value(),
-        base_url=settings.chat_fallback_base_url,
-        timeout=LLM_TIMEOUT_SECONDS,
-        max_retries=1,
-    )
+def get_fallback_targets(settings: AppSettings) -> list[LlmTarget]:
+    """Fallback models in configured order, skipping providers without a key. Tests override this."""
+    providers = {
+        "groq": (settings.groq_api_key, settings.chat_base_url),
+        "gemini": (settings.gemini_api_key, settings.gemini_base_url),
+    }
+    clients: dict[str, OpenAI] = {}
+    targets: list[LlmTarget] = []
+    for provider, model in parse_model_chain(settings.chat_fallback_models):
+        key, base_url = providers[provider]
+        if key is None:
+            continue
+        if provider not in clients:
+            clients[provider] = OpenAI(
+                api_key=key.get_secret_value(), base_url=base_url, timeout=LLM_TIMEOUT_SECONDS, max_retries=1
+            )
+        targets.append(LlmTarget(clients[provider], model, f"{provider}:{model}"))
+    return targets
 
 
 @router.post("", response_model=ChatResponse)
@@ -52,9 +61,9 @@ def chat(
     settings: AppSettings,
     session: Annotated[CurrentSession, Depends(require_admin)],
     client: Annotated[OpenAI | None, Depends(get_llm_client)],
-    fallback: Annotated[OpenAI | None, Depends(get_fallback_client)],
+    fallbacks: Annotated[list[LlmTarget], Depends(get_fallback_targets)],
 ) -> ChatResponse:
-    if client is None and fallback is None:
+    if client is None and not fallbacks:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The assistant is not configured.")
     wait = chat_limiter.check(str(session.admin.id), settings.chat_rate_limit_per_min)
     if wait is not None:
@@ -72,7 +81,7 @@ def chat(
             payload.message,
             [h.model_dump() for h in payload.history],
             today,
-            fallback,
+            fallbacks,
         )
     except ChatBusy:
         raise HTTPException(

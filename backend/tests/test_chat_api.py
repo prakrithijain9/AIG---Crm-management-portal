@@ -10,8 +10,8 @@ import httpx
 import openai
 import pytest
 
-from app.api.chat import get_fallback_client, get_llm_client
-from app.chat.agent import GAVE_UP
+from app.api.chat import get_fallback_targets, get_llm_client
+from app.chat.agent import GAVE_UP, LlmTarget, cooldowns
 from app.chat.ratelimit import chat_limiter
 from app.core.config import get_settings
 from app.core.security import CSRF_HEADER_NAME
@@ -55,9 +55,11 @@ def use_llm(api_app, fake):
     return fake
 
 
-def use_fallback(api_app, fake):
-    api_app.dependency_overrides[get_fallback_client] = lambda: fake
-    return fake
+def use_fallbacks(api_app, *fakes):
+    """A fallback chain of fake clients, models fallback-model-1, -2, ... Returns the fakes in order."""
+    targets = [LlmTarget(fake, f"fallback-model-{i}", f"test:fb{i}") for i, fake in enumerate(fakes, 1)]
+    api_app.dependency_overrides[get_fallback_targets] = lambda: targets
+    return fakes
 
 
 def with_settings(api_app, auth_settings, **update):
@@ -66,20 +68,22 @@ def with_settings(api_app, auth_settings, **update):
 
 @pytest.fixture(autouse=True)
 def _isolation(api_app):
-    """Never call a real LLM (backend/.env may hold a real key), and start each test with a clean limiter."""
+    """Never call a real LLM (backend/.env may hold real keys), and start each test clean."""
     chat_limiter.reset()
+    cooldowns.reset()
 
     def no_network(**_):
         raise AssertionError("test tried to call a real LLM")
 
     tripwire = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=no_network)))
     api_app.dependency_overrides[get_llm_client] = lambda: tripwire
-    # No fallback unless a test asks for one: backend/.env may hold a real Gemini key too.
-    api_app.dependency_overrides[get_fallback_client] = lambda: None
+    # No fallbacks unless a test asks for them.
+    api_app.dependency_overrides[get_fallback_targets] = lambda: []
     yield
     api_app.dependency_overrides.pop(get_llm_client, None)
-    api_app.dependency_overrides.pop(get_fallback_client, None)
+    api_app.dependency_overrides.pop(get_fallback_targets, None)
     chat_limiter.reset()
+    cooldowns.reset()
 
 
 def ask(client, message="hi", history=None):
@@ -243,51 +247,115 @@ def test_invalid_requests_are_rejected_before_any_llm_call(client, payload):
 def test_no_keys_at_all_returns_503(client, api_app, auth_settings):
     # Use the real dependencies, which check the keys.
     api_app.dependency_overrides.pop(get_llm_client)
-    api_app.dependency_overrides.pop(get_fallback_client)
+    api_app.dependency_overrides.pop(get_fallback_targets)
     with_settings(api_app, auth_settings, groq_api_key=None, gemini_api_key=None)
     response = ask(client)
     assert response.status_code == 503 and "not configured" in response.json()["detail"]
 
 
-def test_real_dependencies_build_clients_only_for_configured_keys(auth_settings):
+def test_real_dependencies_build_the_chain_from_configured_keys(auth_settings):
     from pydantic import SecretStr
 
-    none = auth_settings.model_copy(update={"groq_api_key": None, "gemini_api_key": None})
-    assert get_llm_client(none) is None and get_fallback_client(none) is None
+    base = {"groq_api_key": None, "gemini_api_key": None}
+    assert get_llm_client(auth_settings.model_copy(update=base)) is None
+    assert get_fallback_targets(auth_settings.model_copy(update=base)) == []
+
+    chain = "groq:model-a,gemini:model-b,groq:model-c"
     both = auth_settings.model_copy(
-        update={"groq_api_key": SecretStr("g" * 12), "gemini_api_key": SecretStr("m" * 12)}
+        update={
+            "groq_api_key": SecretStr("g" * 12),
+            "gemini_api_key": SecretStr("m" * 12),
+            "chat_fallback_models": chain,
+        }
     )
-    primary, fallback = get_llm_client(both), get_fallback_client(both)
-    assert str(primary.base_url).startswith(both.chat_base_url.rstrip("/"))
-    assert str(fallback.base_url).startswith(both.chat_fallback_base_url.rstrip("/"))
+    targets = get_fallback_targets(both)
+    assert [t.label for t in targets] == ["groq:model-a", "gemini:model-b", "groq:model-c"]
+    assert targets[0].client is targets[2].client  # one client per provider
+    assert "generativelanguage" in str(targets[1].client.base_url)
+    assert str(get_llm_client(both).base_url).startswith(both.chat_base_url.rstrip("/"))
+
+    only_gemini = both.model_copy(update={"groq_api_key": None})
+    assert [t.label for t in get_fallback_targets(only_gemini)] == ["gemini:model-b"]  # no key: skipped
 
 
-# --- fallback provider ----------------------------------------------------------------
+# --- fallback chain -------------------------------------------------------------------
 
 
-def _rate_limited():
+def _rate_limited(retry_after=None):
     request = httpx.Request("POST", "http://llm.invalid")
-    return openai.RateLimitError("tokens per day", response=httpx.Response(429, request=request), body=None)
+    headers = {"retry-after": str(retry_after)} if retry_after is not None else {}
+    return openai.RateLimitError(
+        "tokens per day", response=httpx.Response(429, request=request, headers=headers), body=None
+    )
 
 
 def _outage():
     return openai.APIConnectionError(request=httpx.Request("POST", "http://llm.invalid"))
 
 
-def test_primary_success_never_touches_the_fallback(client, api_app):
+def test_primary_success_never_touches_the_fallbacks(client, api_app):
     use_llm(api_app, FakeLLM(reply("from primary")))
-    fallback = use_fallback(api_app, FakeLLM())  # no scripted steps: any call fails the test
+    (fallback,) = use_fallbacks(api_app, FakeLLM())  # no scripted steps: any call fails the test
     assert ask(client).json()["reply"] == "from primary"
     assert fallback.requests == []
 
 
 @pytest.mark.parametrize("failure", [_rate_limited, _outage], ids=["rate-limited", "outage"])
-def test_fallback_answers_when_the_primary_fails(client, api_app, auth_settings, failure):
+def test_next_model_answers_when_the_primary_fails(client, api_app, failure):
     use_llm(api_app, FakeLLM(failure()))
-    fallback = use_fallback(api_app, FakeLLM(reply("from fallback")))
+    (fallback,) = use_fallbacks(api_app, FakeLLM(reply("from fallback")))
     response = ask(client)
     assert response.status_code == 200 and response.json()["reply"] == "from fallback"
-    assert fallback.requests[0]["model"] == auth_settings.chat_fallback_model
+    assert fallback.requests[0]["model"] == "fallback-model-1"
+
+
+def test_chain_is_tried_in_order_and_stops_at_the_first_answer(client, api_app):
+    use_llm(api_app, FakeLLM(_rate_limited()))
+    first, second, third = use_fallbacks(
+        api_app, FakeLLM(_outage()), FakeLLM(reply("second answered")), FakeLLM()
+    )
+    assert ask(client).json()["reply"] == "second answered"
+    assert len(first.requests) == 1 and len(second.requests) == 1 and third.requests == []
+
+
+def test_a_rate_limited_model_is_skipped_until_its_cooldown_ends(client, api_app):
+    primary = use_llm(api_app, FakeLLM(_rate_limited(retry_after=300), reply("primary is back")))
+    (fallback,) = use_fallbacks(api_app, FakeLLM(forever=reply("from fallback")))
+    assert ask(client).json()["reply"] == "from fallback"
+    assert len(primary.requests) == 1
+    # Second question: the primary is cooling down, so it is not even asked (no wasted request).
+    assert ask(client).json()["reply"] == "from fallback"
+    assert len(primary.requests) == 1 and len(fallback.requests) == 2
+    # Once the cooldown is over it is tried again.
+    cooldowns.reset()
+    assert ask(client).json()["reply"] == "primary is back"
+
+
+def test_outages_do_not_start_a_cooldown(client, api_app):
+    primary = use_llm(api_app, FakeLLM(_outage(), reply("recovered")))
+    use_fallbacks(api_app, FakeLLM(forever=reply("from fallback")))
+    assert ask(client).json()["reply"] == "from fallback"
+    assert ask(client).json()["reply"] == "recovered"  # asked again immediately
+    assert len(primary.requests) == 2
+
+
+def test_cooldown_lengths_follow_the_provider_hint():
+    from app.chat.agent import Cooldowns
+
+    now = [0.0]
+    cool = Cooldowns(clock=lambda: now[0])
+    cool.block("a", 120)
+    cool.block("b", None)  # no hint: the default (60s)
+    cool.block("c", 1)  # absurdly short hints are raised to the minimum (5s)
+    cool.block("d", 99999)  # absurdly long ones are capped (900s)
+    now[0] = 4
+    assert [cool.active(x) for x in "abcd"] == [True, True, True, True]
+    now[0] = 6
+    assert [cool.active(x) for x in "abcd"] == [True, True, False, True]
+    now[0] = 61
+    assert [cool.active(x) for x in "abcd"] == [True, False, False, True]
+    now[0] = 901
+    assert [cool.active(x) for x in "abcd"] == [False, False, False, False]
 
 
 def test_fallback_restarts_the_turn_cleanly_after_a_partial_primary_run(client, api_app):
@@ -301,7 +369,7 @@ def test_fallback_restarts_the_turn_cleanly_after_a_partial_primary_run(client, 
             _rate_limited(),
         ),
     )
-    fallback = use_fallback(
+    (fallback,) = use_fallbacks(
         api_app,
         FakeLLM(
             reply(None, tool_call("propose_update", "f1", entity="deal", id=deal["id"], changes={"stage": "Won"})),
@@ -315,21 +383,29 @@ def test_fallback_restarts_the_turn_cleanly_after_a_partial_primary_run(client, 
     assert [m["role"] for m in first] == ["system", "user"]  # fresh start, no leftover tool messages
 
 
-def test_only_the_fallback_configured_still_answers(client, api_app):
+def test_only_fallbacks_configured_still_answers(client, api_app):
     api_app.dependency_overrides[get_llm_client] = lambda: None
-    use_fallback(api_app, FakeLLM(reply("from gemini")))
+    use_fallbacks(api_app, FakeLLM(reply("from gemini")))
     assert ask(client).json()["reply"] == "from gemini"
 
 
-def test_both_providers_failing_reports_busy_if_either_was_rate_limited(client, api_app):
+def test_every_model_failing_reports_busy_if_any_was_rate_limited(client, api_app):
     use_llm(api_app, FakeLLM(_rate_limited()))
-    use_fallback(api_app, FakeLLM(_outage()))
+    use_fallbacks(api_app, FakeLLM(_outage()))
     assert ask(client).status_code == 429
 
 
-def test_both_providers_down_reports_502(client, api_app):
+def test_every_model_cooling_down_reports_busy_without_any_call(client, api_app):
+    primary = use_llm(api_app, FakeLLM(_rate_limited(retry_after=300)))
+    (fallback,) = use_fallbacks(api_app, FakeLLM(_rate_limited(retry_after=300)))
+    assert ask(client).status_code == 429
+    assert ask(client).status_code == 429  # both are cooling now: nobody is asked
+    assert len(primary.requests) == 1 and len(fallback.requests) == 1
+
+
+def test_every_model_down_reports_502(client, api_app):
     use_llm(api_app, FakeLLM(_outage()))
-    use_fallback(api_app, FakeLLM(_outage()))
+    use_fallbacks(api_app, FakeLLM(_outage()))
     assert ask(client).status_code == 502
 
 

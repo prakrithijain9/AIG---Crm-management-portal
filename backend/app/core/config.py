@@ -76,6 +76,26 @@ def _origin_list(raw: str, source: str) -> list[str]:
     return origins
 
 
+CHAT_PROVIDERS = ("groq", "gemini")
+
+
+def parse_model_chain(value: str) -> list[tuple[str, str]]:
+    """"groq:openai/gpt-oss-20b,gemini:gemini-2.5-flash-lite" -> [("groq", "openai/gpt-oss-20b"), ...]."""
+    chain: list[tuple[str, str]] = []
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        provider, _, model = entry.partition(":")
+        if provider not in CHAT_PROVIDERS or not model.strip():
+            raise ValueError(
+                f"CHAT_FALLBACK_MODELS entries must look like provider:model with provider one of "
+                f"{', '.join(CHAT_PROVIDERS)}."
+            )
+        chain.append((provider, model.strip()))
+    return chain
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
@@ -130,14 +150,15 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     chat_model: str = Field(default="openai/gpt-oss-120b", min_length=1)
     chat_base_url: str = Field(default="https://api.groq.com/openai/v1", min_length=1)
-    # Optional second provider (Gemini, OpenAI-compatible endpoint). Used when the primary is rate
-    # limited (Groq's free tier caps tokens per day) or unreachable. With only this key set, the
-    # assistant runs on it alone.
+    # Optional second provider (Gemini, OpenAI-compatible endpoint).
     gemini_api_key: SecretStr | None = None
-    chat_fallback_model: str = Field(default="gemini-2.5-flash-lite", min_length=1)
-    chat_fallback_base_url: str = Field(
+    gemini_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/", min_length=1
     )
+    # Tried in order when the primary is rate limited (Groq's free tier caps tokens per day per model)
+    # or unreachable: comma-separated "provider:model", provider = groq | gemini. Entries whose
+    # provider has no key are skipped. Empty = no fallback.
+    chat_fallback_models: str = "groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,gemini:gemini-2.5-flash-lite"
     # IANA zone used to resolve "today", "overdue" and "this month".
     chat_timezone: str = "Asia/Kolkata"
     chat_max_tool_rounds: int = Field(default=5, ge=1, le=10)
@@ -150,6 +171,12 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             value = value.strip()
             return value or None
+        return value
+
+    @field_validator("chat_fallback_models")
+    @classmethod
+    def _valid_fallback_chain(cls, value: str) -> str:
+        parse_model_chain(value)  # raises ValueError with a clear message
         return value
 
     @field_validator("chat_timezone")

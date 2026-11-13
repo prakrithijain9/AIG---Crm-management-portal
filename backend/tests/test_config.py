@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql.psycopg import dialect as psycopg_dialect
 
 from app.core import config
-from app.core.config import MIN_JWT_SECRET_LENGTH, Settings, canonical_origin, get_settings
+from app.core.config import MIN_JWT_SECRET_LENGTH, Settings, canonical_origin, get_settings, parse_model_chain
 
 # Obviously fake values, used only to check they never appear in error messages.
 DUMMY_SECRET = "test-only-dummy-jwt-secret-" + "x" * 16
@@ -477,8 +477,26 @@ DUMMY_GEMINI_KEY = "test-only-dummy-gemini-key-" + "y" * 8
 def test_fallback_settings_defaults():
     settings = Settings(_env_file=None)
     assert settings.gemini_api_key is None
-    assert settings.chat_fallback_model == "gemini-2.5-flash-lite"
-    assert settings.chat_fallback_base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert settings.gemini_base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert parse_model_chain(settings.chat_fallback_models) == [
+        ("groq", "openai/gpt-oss-20b"),
+        ("groq", "qwen/qwen3.8-27b"),
+        ("gemini", "gemini-2.5-flash-lite"),
+    ]
+
+
+def test_model_chain_parsing():
+    assert parse_model_chain("") == []
+    assert parse_model_chain(" groq:a/b , gemini:c ,") == [("groq", "a/b"), ("gemini", "c")]
+    for bad in ["a/b", "openai:gpt", "groq:", "groq", "groq:a,,mistral:b"]:
+        with pytest.raises(ValueError):
+            parse_model_chain(bad)
+
+
+def test_invalid_fallback_chain_is_rejected_at_startup():
+    with pytest.raises(ValidationError, match="provider:model"):
+        Settings(_env_file=None, chat_fallback_models="not-a-valid-entry")
+    assert Settings(_env_file=None, chat_fallback_models="").chat_fallback_models == ""
 
 
 @pytest.mark.parametrize("blank", ["", "   "])

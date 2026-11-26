@@ -17,6 +17,8 @@ class ChatRequest(InputModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     # The server is stateless: the browser sends the last few turns each time.
     history: list[HistoryItem] = Field(default_factory=list, max_length=MAX_HISTORY)
+    # Made by the browser so the chat log can group the questions of one conversation.
+    conversation_id: Annotated[str, StringConstraints(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
 
 
 class ChatSource(BaseModel):

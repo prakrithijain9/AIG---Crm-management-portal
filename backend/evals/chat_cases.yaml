@@ -283,3 +283,144 @@
   forbid_tools: [propose_delete]
   expect_no_proposal: true
   expect_text: [Share case study for media team]
+
+# --- messy phrasing: typos, slang, partial names --------------------------------------
+
+- id: typo_company_pipeline
+  ask: whats the pipline for northwnd logistics
+  tools: [search]
+  expect_numbers:
+    - >-
+      select sum(d.value) from deals d join companies c on c.id = d.company_id
+      where c.name = 'Northwind Logistics' and d.stage not in ('Won','Lost')
+
+- id: typo_company_contacts
+  ask: who do we know at helois energy
+  tools: [search]
+  expect_text:
+    - sql: "select ct.name from contacts ct join companies c on c.id = ct.company_id where c.name = 'Helios Energy'"
+
+- id: typo_contact_email
+  ask: email of priya ramen pls
+  tools: [search]
+  expect_text: [{sql: "select email from contacts where name = 'Priya Raman'"}]
+
+- id: ampersand_company
+  ask: tell me about harbor and co
+  tools: [search]
+  expect_text: [Harbor, New York]
+
+- id: typo_write_asks_first
+  ask: mark the grid monitring suit deal as won
+  tools: [search]
+  expect_question: true
+  expect_text: [Grid monitoring suite]
+  expect_no_proposal: true
+
+- id: typo_delete_asks_first
+  ask: delete owen broks
+  tools: [search]
+  expect_question: true
+  expect_text: [Owen Brooks]
+  expect_no_proposal: true
+
+- id: slang_open_money
+  ask: how much money is still on the table?
+  tools: [aggregate]
+  expect_numbers: ["select sum(value) from deals where stage not in ('Won','Lost')"]
+
+- id: slang_closed_wins
+  ask: how much have we actually closed so far
+  tools: [aggregate]
+  expect_numbers: [select sum(value) from deals where stage = 'Won']
+
+- id: slang_slipping
+  ask: anything slipping through the cracks?
+  tools: [list_records]
+  expect_text: [{sql: "select subject from activities where status = 'Pending' and due_date < :today"}]
+
+- id: slang_biggest_fish
+  ask: biggest fish in the pipeline right now?
+  tools: [list_records|aggregate]
+  expect_text:
+    - sql: >-
+        select c.name from deals d join companies c on c.id = d.company_id
+        where d.stage not in ('Won','Lost') order by d.value desc limit 1
+
+- id: terse_count
+  ask: contacts count?
+  tools: [aggregate|list_records]
+  expect_numbers: [select count(*) from contacts]
+
+- id: hinglish_open_deals
+  ask: abhi kitne open deals hain?
+  tools: [aggregate|list_records]
+  expect_numbers: ["select count(*) from deals where stage not in ('Won','Lost')"]
+
+- id: hinglish_overdue
+  ask: kaunsi activities overdue hain?
+  tools: [list_records]
+  expect_text: [{sql: "select subject from activities where status = 'Pending' and due_date < :today"}]
+
+- id: hinglish_navigate
+  ask: won deals wala page dikhao
+  tools: [navigate]
+  expect_href: [/deals, stage=Won]
+
+# --- questions that need the newer filters and top-N -----------------------------------
+
+- id: deals_by_industry_filter
+  ask: Which deals do we have in the energy industry?
+  tools: [list_records]
+  expect_text:
+    - sql: "select d.title from deals d join companies c on c.id = d.company_id where c.industry = 'Energy'"
+
+- id: top_three_companies
+  ask: Top 3 companies by open pipeline value?
+  tools: [aggregate]
+  expect_text:
+    - sql: >-
+        select c.name from deals d join companies c on c.id = d.company_id
+        where d.stage not in ('Won','Lost') group by c.name order by sum(d.value) desc limit 3
+
+- id: smallest_deal_company
+  ask: Which company has our smallest deal?
+  tools: [list_records|aggregate]
+  expect_text:
+    - sql: >-
+        select c.name from deals d join companies c on c.id = d.company_id order by d.value limit 1
+
+- id: companies_without_open_deals
+  ask: Which companies have no open deals?
+  tools: [list_records]
+  expect_text:
+    - sql: >-
+        select name from companies c where not exists (select 1 from deals d where d.company_id = c.id
+        and d.stage not in ('Won','Lost'))
+
+- id: companies_gone_quiet
+  ask: Which companies have had no activity in the last 30 days?
+  tools: [list_records]
+  expect_numbers:
+    - >-
+      select count(*) from companies c where not exists (select 1 from activities a where a.company_id = c.id
+      and a.due_date >= cast(:today as date) - 30 and a.due_date <= :today)
+
+# --- follow-ups -------------------------------------------------------------------------
+
+- id: follow_up_pronoun_company
+  history:
+    - {role: user, content: "Tell me about Helios Energy."}
+    - {role: assistant, content: "**Helios Energy** is an Active energy company in Austin, TX."}
+  ask: who are their contacts?
+  tools: [search]
+  expect_text:
+    - sql: "select ct.name from contacts ct join companies c on c.id = ct.company_id where c.name = 'Helios Energy'"
+
+- id: follow_up_narrowing
+  history:
+    - {role: user, content: "How many open deals do we have?"}
+    - {role: assistant, content: You have several open deals across your companies.}
+  ask: only the ones in negotiation
+  tools: [list_records|aggregate]
+  expect_numbers: [select count(*) from deals where stage = 'Negotiation']

@@ -618,3 +618,25 @@ connections are re-checked before use. Add a custom domain to `CORS_ORIGINS` whe
 - **Scaling:** search is `ILIKE '%term%'`, fine for small data; add trigram indexes if it grows. List `limit` is
   capped at 500, so the frontend should page or filter for larger data sets.
 - **`updated_at`** is set by the ORM on update. Raw SQL updates won't change it.
+
+## Chat assistant log
+
+Every chat question appends one JSON line to `backend/logs/chat/<date>.jsonl`: the question and
+history, each model call (model, time, tokens, tools requested), each tool call (arguments,
+result, SQL with values), the model's raw reply, the reply shown, proposals, buttons and
+failures. Eval runs write there too, with `source: "eval"` and the failed checks.
+
+It holds customer names, emails and phone numbers in plain text. It is on only when
+`ENVIRONMENT=development` is explicitly set, unless `CHAT_LOG_ENABLED` says otherwise.
+`backend/logs/` is gitignored and strings shaped like API keys are masked; anything else typed
+into the chat is stored as typed. Files older than `CHAT_LOG_RETENTION_DAYS` (14) are deleted
+when the next entry is written, so an idle or switched-off log keeps its old files.
+Clicking Confirm or Cancel on a proposal card happens in the browser and is not logged.
+In a container the files are lost on rebuild unless the folder is a volume.
+
+```
+cd backend
+.venv\Scripts\python scripts\show_chat_logs.py                # last 10 questions today
+.venv\Scripts\python scripts\show_chat_logs.py --problems     # only failures
+.venv\Scripts\python scripts\show_chat_logs.py --conversation <id> --full
+```

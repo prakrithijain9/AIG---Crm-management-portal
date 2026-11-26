@@ -48,3 +48,6 @@ backend/.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# chat logs hold CRM data
+backend/logs/

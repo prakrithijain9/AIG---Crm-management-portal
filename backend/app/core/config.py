@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     chat_timezone: str = "Asia/Kolkata"
     chat_max_tool_rounds: int = Field(default=5, ge=1, le=10)
     chat_rate_limit_per_min: int = Field(default=10, ge=1, le=120)
+    # The chat log holds CRM data in plain text. Unset: on in development, off everywhere else.
+    chat_log_enabled: bool | None = None
+    chat_log_dir: str = Field(default="logs/chat", min_length=1)  # relative to backend/
+    chat_log_retention_days: int = Field(default=14, ge=1, le=365)
 
     @field_validator("groq_api_key", "gemini_api_key", mode="before")
     @classmethod
@@ -274,6 +278,17 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.strip().lower() not in LOCAL_ENVIRONMENTS
+
+    @property
+    def chat_logging(self) -> bool:
+        if self.chat_log_enabled is not None:
+            return self.chat_log_enabled
+        # A server that forgot ENVIRONMENT must not start writing CRM data to disk.
+        return "environment" in self.model_fields_set and self.environment.strip().lower() == "development"
+
+    @property
+    def chat_log_path(self) -> Path:
+        return BACKEND_DIR / self.chat_log_dir  # an absolute CHAT_LOG_DIR replaces BACKEND_DIR
 
     @property
     def session_cookie_secure(self) -> bool:

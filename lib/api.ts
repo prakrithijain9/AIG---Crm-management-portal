@@ -208,12 +208,17 @@ const chat = {
    * Ask the assistant. `history` is the previous turns (the server keeps no state).
    * Throws ApiError: 503 not configured, 429 busy or too many messages, 502 provider down.
    */
-  async send(message: string, history: ChatTurn[], signal?: AbortSignal): Promise<ChatReply> {
+  async send(
+    message: string,
+    history: ChatTurn[],
+    signal?: AbortSignal,
+    conversationId?: string,
+  ): Promise<ChatReply> {
     const timeout = AbortSignal.timeout(CHAT_TIMEOUT_MS)
     try {
       const response = await request("/chat", {
         method: "POST",
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ message, history, conversationId }),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       })
       return (await response.json()) as ChatReply

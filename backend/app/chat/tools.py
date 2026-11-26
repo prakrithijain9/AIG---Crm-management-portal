@@ -20,10 +20,11 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.alias_generators import to_camel
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, Select, and_, case, func, select
 from sqlalchemy.orm import Session
 
 from app.api.common import contains_any
+from app.chat.fuzzy import closest, words
 from app.models import Activity, ActivityStatus, ActivityType, Company, CompanyStatus, Contact, Deal, DealStage
 from app.schemas.activity import ActivityCreate, ActivityRead, ActivityUpdate
 from app.schemas.common import InputModel
@@ -40,6 +41,7 @@ UPDATE = {"company": CompanyUpdate, "contact": ContactUpdate, "deal": DealUpdate
 OPEN_STAGES = (DealStage.LEAD, DealStage.QUALIFIED, DealStage.PROPOSAL, DealStage.NEGOTIATION)
 
 SEARCH_LIMIT = 10
+SUGGESTION_LIMIT = 5
 MAX_ROWS = 25
 
 
@@ -81,6 +83,8 @@ class CompanyFilters(InputModel):
     industry: str | None = None
     location: str | None = None
     search: str | None = None
+    no_activity_since: date | None = None
+    has_open_deals: bool | None = None
 
 
 class ContactFilters(InputModel):
@@ -95,6 +99,8 @@ class DealFilters(InputModel):
     value_max: Decimal | None = None
     close_from: date | None = None
     close_to: date | None = None
+    industry: str | None = None
+    location: str | None = None
     search: str | None = None
 
 
@@ -112,10 +118,12 @@ class ActivityFilters(InputModel):
 FILTERS = {"company": CompanyFilters, "contact": ContactFilters, "deal": DealFilters, "activity": ActivityFilters}
 
 FILTER_HELP = (
-    "company: status (Active|Prospect|Inactive), industry, location, search. "
+    "company: status (Active|Prospect|Inactive), industry, location, search, hasOpenDeals (bool), "
+    "noActivitySince (ISO date: no activity dated from then to today). "
+    "location is stored as 'City, ST': give a city or a two-letter state code (California = CA). "
     "contact: companyId, search. "
     "deal: stage (list of Lead|Qualified|Proposal|Negotiation|Won|Lost), companyId, valueMin, valueMax, "
-    "closeFrom, closeTo (ISO dates), search. "
+    "closeFrom, closeTo (ISO dates), industry and location (of the deal's company), search. "
     "activity: type (Call|Meeting|Email|Task|Follow-up), status (Pending|Completed), companyId, contactId, "
     "dueFrom, dueTo (ISO dates), overdue (true = Pending and due before today), search."
 )
@@ -152,15 +160,22 @@ class ListArgs(ToolArgs):
 
 class AggregateArgs(ToolArgs):
     entity: Entity
-    metric: Literal["count", "sum_value", "avg_value"] = Field(
-        description="sum_value and avg_value are for deals only (sum/average of deal value, USD)."
+    metric: Literal["count", "sum_value", "avg_value", "win_rate"] = Field(
+        description="Deals only except count. sum_value/avg_value: deal value in USD. win_rate: percent of "
+        "closed (Won or Lost) deals that were Won."
     )
     group_by: str | None = Field(
         default=None,
-        description="company: status|industry|location. contact: company. deal: stage|company|close_month. "
+        description="company: status|industry|location. contact: company. deal: stage|company|industry|close_month. "
         "activity: type|status|company|due_month.",
     )
-    filters: dict[str, Any] = Field(default_factory=dict, description=f"Allowed filter keys. {FILTER_HELP}")
+    filters: dict[str, Any] = Field(default_factory=dict, description="Same filter keys as list_records.")
+    sort: Literal["group", "value", "-value"] = Field(
+        default="group",
+        description="Group order. -value = largest first (top N), value = smallest first. Groups with no "
+        "matching records are not listed.",
+    )
+    limit: int | None = Field(default=None, ge=1, le=MAX_ROWS, description="Return only the first N groups.")
 
 
 class ProposeCreateArgs(ToolArgs):
@@ -222,6 +237,13 @@ def _parse_filters(entity: str, raw: dict[str, Any]) -> BaseModel:
         raise _validation_error(exc, f"{entity} filters") from None
 
 
+def _in_location(location: str) -> ColumnElement[bool]:
+    """Two letters are a state code ("CA" must not match "Chicago"); anything else is a substring."""
+    if len(location) == 2 and location.isalpha():
+        return Company.location.ilike(f"%, {location}")
+    return contains_any(location, Company.location)
+
+
 def _filtered(entity: str, f: Any, today: date) -> Select:
     stmt = _base(entity)
     where: list[ColumnElement[bool]] = []
@@ -231,7 +253,19 @@ def _filtered(entity: str, f: Any, today: date) -> Select:
         if f.industry:
             where.append(contains_any(f.industry, Company.industry))
         if f.location:
-            where.append(contains_any(f.location, Company.location))
+            where.append(_in_location(f.location))
+        if f.no_activity_since:
+            if f.no_activity_since > today:
+                raise ToolError("noActivitySince is in the future; give today or an earlier date.")
+            recent = select(Activity.id).where(
+                Activity.company_id == Company.id,
+                Activity.due_date >= f.no_activity_since,
+                Activity.due_date <= today,
+            )
+            where.append(~recent.exists())
+        if f.has_open_deals is not None:
+            has_open = select(Deal.id).where(Deal.company_id == Company.id, Deal.stage.in_(OPEN_STAGES)).exists()
+            where.append(has_open if f.has_open_deals else ~has_open)
         if f.search:
             where.append(
                 contains_any(f.search, Company.name, Company.industry, Company.email, Company.phone, Company.location)
@@ -256,6 +290,10 @@ def _filtered(entity: str, f: Any, today: date) -> Select:
             where.append(Deal.expected_close_date >= f.close_from)
         if f.close_to:
             where.append(Deal.expected_close_date <= f.close_to)
+        if f.industry:
+            where.append(contains_any(f.industry, Company.industry))
+        if f.location:
+            where.append(_in_location(f.location))
         if f.search:
             where.append(contains_any(f.search, Deal.title, Deal.stage, Company.name))
     else:
@@ -347,28 +385,78 @@ def _count(db: Session, stmt: Select) -> int:
 # --- Read tools ---------------------------------------------------------------------
 
 
+# What a search term is compared against: "the Summit deal" names the company, not the title.
+SEARCH_COLUMNS = {
+    "company": (Company.name,),
+    "contact": (Contact.name, Contact.email),
+    "deal": (Deal.title, Company.name),
+    "activity": (Activity.subject, Company.name),
+}
+# Typo matching tries each record's own name first. Only if nothing is close does it add the
+# company name; otherwise one misspelled company would also "match" all its deals and activities.
+# Emails are skipped: their domains make unrelated records look alike.
+OWN_NAME = {
+    "company": (Company.name,),
+    "contact": (Contact.name,),
+    "deal": (Deal.title,),
+    "activity": (Activity.subject,),
+}
+WITH_COMPANY = {
+    "company": (Company.name,),
+    "contact": (Contact.name, Company.name),
+    "deal": (Deal.title, Company.name),
+    "activity": (Activity.subject, Company.name),
+}
+
+
+def _match(db: Session, entity: str, obj: Any) -> dict:
+    company = obj if entity == "company" else db.get(Company, obj.company_id)
+    label = f"{obj.name} <{obj.email}>" if entity == "contact" else _label(entity, obj)
+    return {"type": entity, "id": str(obj.id), "label": label, "companyName": company.name}
+
+
+def _suggestions(db: Session, query: str, wanted: list[str]) -> tuple[list[dict], bool]:
+    """The closest records, and whether there were more than we return."""
+    for columns in (OWN_NAME, WITH_COMPANY):
+        candidates = []
+        for entity in wanted:
+            model = MODELS[entity]
+            stmt = _base(entity).with_only_columns(model.id, *columns[entity], maintain_column_froms=True)
+            candidates.extend(((entity, row[0]), list(row[1:])) for row in db.execute(stmt.order_by(model.id)))
+        if found := closest(query, candidates, limit=SUGGESTION_LIMIT + 1):
+            shown = [_match(db, e, db.get(MODELS[e], record_id)) for e, record_id in found[:SUGGESTION_LIMIT]]
+            return shown, len(found) > SUGGESTION_LIMIT
+    return [], False
+
+
 def search(db: Session, args: SearchArgs, today: date) -> dict:
     wanted = [args.entity] if args.entity else list(ENTITIES)
-    columns = {
-        "company": (Company.name,),
-        "contact": (Contact.name, Contact.email),
-        "deal": (Deal.title, Company.name),  # "the Summit deal" names the company
-        "activity": (Activity.subject, Company.name),
-    }
     matches: list[dict] = []
     sources: list[dict] = []
     truncated = False
-    for entity in wanted:
-        stmt = _base(entity).where(contains_any(args.query, *columns[entity])).order_by(*_order(entity, None))
-        for obj in db.scalars(stmt.limit(SEARCH_LIMIT + 1)):
-            if len(matches) >= SEARCH_LIMIT:
-                truncated = True
-                break
-            company = obj if entity == "company" else db.get(Company, obj.company_id)
-            label = f"{obj.name} <{obj.email}>" if entity == "contact" else _label(entity, obj)
-            matches.append({"type": entity, "id": str(obj.id), "label": label, "companyName": company.name})
-            sources.append(_source(entity, obj))
-    return {"matches": matches, "truncated": truncated, "sources": sources}
+    # The typed phrase first. If nothing contains it, require every meaningful word instead, each in
+    # any column: "vertex demo" is a company name plus a word of the activity subject.
+    typed = words(args.query)
+    phrase = lambda columns: contains_any(args.query, *columns)  # noqa: E731
+    every_word = lambda columns: and_(*(contains_any(word, *columns) for word in typed))  # noqa: E731
+    for condition in (phrase, every_word) if typed else (phrase,):
+        for entity in wanted:
+            stmt = _base(entity).where(condition(SEARCH_COLUMNS[entity])).order_by(*_order(entity, None))
+            for obj in db.scalars(stmt.limit(SEARCH_LIMIT + 1)):
+                if len(matches) >= SEARCH_LIMIT:
+                    truncated = True
+                    break
+                matches.append(_match(db, entity, obj))
+                sources.append(_source(entity, obj))
+        if matches:
+            break
+    out = {"matches": matches, "truncated": truncated, "sources": sources}
+    if not matches:
+        guesses, more = _suggestions(db, args.query, wanted)
+        if guesses:
+            out["didYouMean"] = guesses  # guesses are deliberately not sources
+            out["truncated"] = more
+    return out
 
 
 def get_record(db: Session, args: GetRecordArgs, today: date) -> dict:
@@ -419,6 +507,7 @@ GROUPS = {
     "deal": {
         "stage": Deal.stage,
         "company": Company.name,
+        "industry": Company.industry,
         "close_month": func.to_char(Deal.expected_close_date, "YYYY-MM"),
     },
     "activity": {
@@ -437,17 +526,23 @@ def aggregate(db: Session, args: AggregateArgs, today: date) -> dict:
         raise ToolError(f"Invalid group_by for {args.entity}. Allowed: {', '.join(GROUPS[args.entity])}.")
     base = _filtered(args.entity, _parse_filters(args.entity, args.filters), today)
     model = MODELS[args.entity]
+    counted = func.count(model.id)
     if args.metric == "count":
         metric = func.count(model.id)
+    elif args.metric == "win_rate":
+        # Open deals give NULL, which avg and count skip.
+        won = case((Deal.stage == DealStage.WON, 100), (Deal.stage == DealStage.LOST, 0))
+        metric, counted = func.avg(won), func.count(won)
     elif args.metric == "sum_value":
         metric = func.coalesce(func.sum(Deal.value), 0)
     else:
         metric = func.avg(Deal.value)
     group = GROUPS[args.entity][args.group_by] if args.group_by else None
-    columns = [metric, func.count(model.id)] if group is None else [group, metric, func.count(model.id)]
+    columns = [metric, counted] if group is None else [group, metric, counted]
     stmt = base.with_only_columns(*columns, maintain_column_froms=True).order_by(None)
     if group is not None:
-        stmt = stmt.group_by(group).order_by(group)
+        ranking = {"group": [group], "value": [metric.asc(), group], "-value": [metric.desc(), group]}
+        stmt = stmt.group_by(group).order_by(*ranking[args.sort])
     rows = []
     for row in db.execute(stmt):
         key, value, count = (None, row[0], row[1]) if group is None else (row[0], row[1], row[2])
@@ -456,9 +551,19 @@ def aggregate(db: Session, args: AggregateArgs, today: date) -> dict:
         if args.metric == "count":
             shown: Any = int(value)
         else:
-            shown = _money(value) if value is not None else None
+            if value is None:
+                shown = None
+            else:
+                shown = f"{value:.1f}" if args.metric == "win_rate" else _money(value)
         rows.append({"group": key, "value": shown, "count": int(count)})
-    return {"metric": args.metric, "groupBy": args.group_by, "rows": rows}
+    out = {"metric": args.metric, "groupBy": args.group_by, "rows": rows[: args.limit]}
+    if group is not None:
+        out["totalGroups"] = len(rows)
+        cut = args.limit
+        out["tiedAtCutoff"] = bool(
+            args.sort != "group" and cut and cut < len(rows) and rows[cut - 1]["value"] == rows[cut]["value"]
+        )
+    return out
 
 
 # --- Proposals ----------------------------------------------------------------------

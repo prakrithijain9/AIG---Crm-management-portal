@@ -258,6 +258,12 @@ describe("sign-in and session handling", () => {
     assert.equal(headersOf(calls[0])[CSRF_HEADER_NAME], "csrf-from-server")
   })
 
+  it("sends the conversation id so the chat log can group questions", async () => {
+    mockFetch(json({ reply: "Hi", proposals: [], actions: [], sources: [] }))
+    await api.chat.send("hello", [], undefined, "conv-1")
+    assert.equal(JSON.parse(String(calls.at(-1)?.init?.body)).conversationId, "conv-1")
+  })
+
   it("passes the assistant's 503 and 429 messages through", async () => {
     mockFetch(json({ detail: "The assistant is not configured." }, 503))
     const notConfigured = await rejection(api.chat.send("hi", []))

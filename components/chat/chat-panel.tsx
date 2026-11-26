@@ -22,6 +22,9 @@ function toTurns(messages: ChatMessage[]): ChatTurn[] {
 
 let nextId = 0
 const newId = () => `m${++nextId}`
+// Groups one conversation's questions in the server's chat log. randomUUID needs HTTPS or localhost.
+const newConversationId = () =>
+  globalThis.crypto?.randomUUID?.() ?? `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 
 /**
  * The assistant: a floating button plus a right-hand panel, mounted once in AppShell so the
@@ -34,6 +37,7 @@ export function ChatPanel() {
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
+  const conversationId = useRef("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const openerRef = useRef<HTMLButtonElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -61,7 +65,8 @@ export function ChatPanel() {
     setSending(true)
     setProblem(null)
     try {
-      const reply = await api.chat.send(text, buildHistory(toTurns(earlier)))
+      conversationId.current ||= newConversationId()
+      const reply = await api.chat.send(text, buildHistory(toTurns(earlier)), undefined, conversationId.current)
       setMessages((current) => [
         ...current,
         {
@@ -147,6 +152,7 @@ export function ChatPanel() {
               onClick={() => {
                 setMessages([])
                 setProblem(null)
+                conversationId.current = ""
               }}
             >
               <SquarePen />

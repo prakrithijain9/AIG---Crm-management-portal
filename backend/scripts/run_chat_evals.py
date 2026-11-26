@@ -35,6 +35,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.chat.agent import ChatBusy, ChatFailed, run_chat  # noqa: E402
+from app.chat.chatlog import ChatTrace, write_trace  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.models import Activity, Company, Contact  # noqa: E402
@@ -215,16 +216,18 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", action="append", help="repeatable; default CHAT_MODEL")
     parser.add_argument("--only", help="run case ids containing this text")
+    parser.add_argument("--cases", type=Path, default=CASES, help="YAML file of cases")
     parser.add_argument("--pause", type=float, default=6.0, help="seconds between cases (free-tier TPM)")
     parser.add_argument("--verbose", action="store_true", help="print every reply")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows consoles default to cp1252
 
     settings = get_settings()
-    cases = yaml.safe_load(CASES.read_text(encoding="utf-8"))
+    cases = yaml.safe_load(args.cases.read_text(encoding="utf-8"))
     if args.only:
         cases = [c for c in cases if args.only in c["id"]]
     today = datetime.now(ZoneInfo(settings.chat_timezone)).date()
+    run_id = datetime.now().strftime("%H%M%S")
     # More retries than the app: evals should wait out the per-minute limit, not fail on it.
     def client_for(provider: str):
         if provider == "gemini":
@@ -256,10 +259,13 @@ def main() -> int:
             db = SessionLocal()
             rec = Recorder(client)
             started = time.monotonic()
+            history = case.get("history", [])
+            trace = ChatTrace(case["ask"], history, f"eval-{run_id}-{case['id']}", source="eval")
             try:
-                setup(db, case.get("setup", []))
-                result = run_chat(rec, model_settings, db, case["ask"], case.get("history", []), today)
+                setup(db, resolve(db, case.get("setup", []), today))
+                result = run_chat(rec, model_settings, db, case["ask"], history, today, trace=trace)
                 problems = check(case, db, today, rec, result)
+                trace.set(evalCase=case["id"], evalProblems=problems)
             except (ChatBusy, ChatFailed) as exc:
                 errored += 1
                 print(f"  ERROR {case['id']}: {type(exc).__name__} (provider)", flush=True)
@@ -268,9 +274,13 @@ def main() -> int:
             except Exception as exc:  # a broken case must not stop the run
                 problems = [f"harness error: {type(exc).__name__}: {str(exc).splitlines()[0]}"]
                 result = SimpleNamespace(reply="")
+                trace.set(evalProblems=problems)
             finally:
                 db.rollback()
                 db.close()
+                if settings.chat_logging:
+                    trace.data.setdefault("evalCase", case["id"])
+                    write_trace(trace, settings.chat_log_path, settings.chat_log_retention_days)
             took = time.monotonic() - started
             if problems:
                 print(f"  FAIL  {case['id']} ({took:.1f}s, calls={[n for n, _ in rec.calls]})")

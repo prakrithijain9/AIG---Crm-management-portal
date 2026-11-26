@@ -11,6 +11,7 @@ from openai import OpenAI
 from app.api.auth import AppSettings, CurrentSession, require_admin
 from app.api.common import DbSession
 from app.chat.agent import ChatBusy, ChatFailed, LlmTarget, run_chat
+from app.chat.chatlog import ChatTrace, write_trace
 from app.chat.ratelimit import chat_limiter
 from app.core.config import parse_model_chain
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -65,8 +66,17 @@ def chat(
 ) -> ChatResponse:
     if client is None and not fallbacks:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The assistant is not configured.")
+    history = [h.model_dump() for h in payload.history]
+    trace = ChatTrace(payload.message, history, payload.conversation_id, str(session.admin.id))
+
+    def save_log() -> None:
+        if settings.chat_logging:
+            write_trace(trace, settings.chat_log_path, settings.chat_log_retention_days)
+
     wait = chat_limiter.check(str(session.admin.id), settings.chat_rate_limit_per_min)
     if wait is not None:
+        trace.set(status="too_many_messages", history=[])  # a looping client must not fill the disk
+        save_log()
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "You're sending messages too quickly. Wait a moment and try again.",
@@ -79,9 +89,10 @@ def chat(
             settings,
             db,
             payload.message,
-            [h.model_dump() for h in payload.history],
+            history,
             today,
             fallbacks,
+            trace,
         )
     except ChatBusy:
         raise HTTPException(
@@ -91,6 +102,7 @@ def chat(
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The assistant could not be reached.") from None
     finally:
         db.rollback()  # reads only; end the transaction so the connection goes back clean
+        save_log()  # also for failures: those are the entries worth reading
     return ChatResponse(
         reply=result.reply, proposals=result.proposals, actions=result.actions, sources=result.sources
     )

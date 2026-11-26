@@ -1,0 +1,231 @@
+# How a first-time user talks: no knowledge of the project, field names or database.
+# Same keys as chat_cases.yaml. Run: scripts/run_chat_evals.py --cases evals/user_prompts.yaml
+
+# --- first contact --------------------------------------------------------------------
+- id: u_hello
+  ask: "hi"
+  expect_no_proposal: true
+- id: u_what_can_you_do
+  ask: "what can you do?"
+  expect_no_proposal: true
+- id: u_business_overview
+  ask: "how are we doing?"
+  tools: [aggregate|list_records]
+  expect_no_proposal: true
+
+# --- everyday words: clients, customers, leads, sales ---------------------------------
+- id: u_list_clients
+  ask: "show me all my clients"
+  tools: [list_records|navigate]
+  expect_no_proposal: true
+- id: u_how_many_customers
+  ask: "how many customers do we have"
+  tools: [aggregate|list_records]
+  expect_numbers: ["select count(*) from companies"]
+- id: u_new_leads
+  ask: "any new leads?"
+  tools: [list_records]
+  expect_text: [Aperture]
+- id: u_who_at_energy
+  ask: "who's our guy at the energy company?"
+  expect_text: [Marcus Chen, Owen Brooks]
+- id: u_phone_number
+  ask: "I need to ring Priya, what's her number"
+  expect_text: [{sql: "select phone from contacts where name = 'Priya Raman'"}]
+- id: u_call_company
+  ask: "how do I get hold of Vertex?"
+  expect_text: [{sql: "select phone from companies where name = 'Vertex Manufacturing'"}]
+- id: u_california
+  ask: "which of our clients are in california?"
+  tools: [list_records]
+  expect_text: [Northwind, Lumen]
+  forbid_text: [Summit]
+- id: u_texas_deals
+  ask: "what business do we have in texas"
+  expect_text: [Grid monitoring]
+  forbid_text: [Fleet tracking]
+
+# --- money ----------------------------------------------------------------------------
+- id: u_money_expected
+  ask: "how much money are we hoping to make?"
+  tools: [aggregate]
+  expect_numbers: ["select sum(value) from deals where stage not in ('Won','Lost')"]
+- id: u_won_vs_lost
+  ask: "how much did we win compared to what we lost"
+  tools: [aggregate]
+  expect_numbers:
+    - "select sum(value) from deals where stage = 'Won'"
+    - "select sum(value) from deals where stage = 'Lost'"
+- id: u_win_rate
+  ask: "what's our win rate?"
+  tools: [aggregate|list_records]
+  expect_no_proposal: true
+- id: u_almost_done
+  ask: "which sales are almost done?"
+  tools: [list_records]
+  expect_text: [Fleet tracking, Shop-floor]
+- id: u_status_of_thing
+  ask: "whats the status of the fleet thing"
+  tools: [search]
+  expect_text: [Negotiation]
+- id: u_everything_not_lost
+  ask: "total value of everything except the ones we lost"
+  tools: [aggregate]
+  expect_numbers: ["select sum(value) from deals where stage <> 'Lost'"]
+
+# --- my day ---------------------------------------------------------------------------
+- id: u_today
+  setup:
+    - activity: {company: Lumen Media, type: Call, status: Pending, due_date: {today_plus: 0}, subject: "Renewal check-in"}
+  ask: "what do I need to do today?"
+  tools: [list_records]
+  expect_text: [Renewal check-in]
+- id: u_tomorrow
+  setup:
+    - activity: {company: Helios Energy, type: Meeting, status: Pending, due_date: {today_plus: 1}, subject: "Budget walkthrough"}
+  ask: "anything tomorrow?"
+  tools: [list_records]
+  expect_text: [Budget walkthrough]
+- id: u_did_i_miss
+  ask: "did I forget to do anything?"
+  tools: [list_records]
+  expect_text: [{sql: "select subject from activities where status = 'Pending' and due_date < :today"}]
+- id: u_upcoming_meetings
+  setup:
+    - activity: {company: Helios Energy, type: Meeting, status: Pending, due_date: {today_plus: 3}, subject: "Quarterly planning"}
+  ask: "any meetings coming up?"
+  tools: [list_records]
+  expect_text: [Quarterly planning]
+- id: u_neglected
+  ask: "is there anyone we haven't talked to in a while?"
+  tools: [list_records]
+  expect_no_proposal: true
+- id: u_what_happened
+  ask: "what happened with harbor?"
+  tools: [search]
+  expect_text: [Lost]
+
+# --- data the CRM does not have, or actions it cannot do ------------------------------
+- id: u_why_lost
+  ask: "why did we lose the Harbor deal?"
+  tools: [search]
+  expect_any_text: ["not record", "no reason", "doesn't", "does not", "no information", "isn't", "not include", "no note", "can't", "don't have", "not stored", "no details", "not available", "no field"]
+  expect_no_proposal: true
+- id: u_salesperson
+  ask: "who is our best salesperson?"
+  expect_any_text: ["not track", "doesn't", "does not", "don't", "no information", "can't", "isn't", "not record", "no data", "not available", "not stored"]
+  expect_no_proposal: true
+- id: u_send_email
+  ask: "send an email to Marcus saying we'll be late"
+  expect_any_text: ["can't", "cannot", "not able", "unable", "don't have the ability", "isn't something"]
+  forbid_text: ["email sent", "I've sent", "I have sent"]
+- id: u_export
+  ask: "export all contacts to excel"
+  expect_any_text: ["can't", "cannot", "not able", "unable", "isn't", "not supported", "doesn't"]
+
+# --- changes said casually ------------------------------------------------------------
+- id: u_we_won
+  ask: "great news, the clinic people signed!"
+  tools: [search, propose_update]
+  expect_proposal:
+    op: update
+    entity: deal
+    id: {sql: "select id::text from deals where title = 'Clinic operations platform'"}
+    input: {stage: Won}
+- id: u_price_up
+  forbid_text: [has been updated, been updated, I've updated, I have updated]
+  ask: "the helios deal is now 450k"
+  tools: [search, propose_update]
+  expect_proposal:
+    op: update
+    entity: deal
+    id: {sql: "select id::text from deals where title = 'Grid monitoring suite'"}
+    input: {value: 450000}
+- id: u_remind_me
+  forbid_text: [has been updated, been updated, I've updated, I have updated]
+  ask: "remind me to call Owen Brooks tomorrow about renewal"
+  tools: [search, propose_create]
+  expect_proposal:
+    op: create
+    entity: activity
+    input:
+      type: Call
+      dueDate: {today_plus: 1}
+      contactId: {sql: "select id::text from contacts where name = 'Owen Brooks'"}
+- id: u_push_date
+  ask: "push the vertex demo to the day after tomorrow"
+  tools: [search, propose_update]
+  expect_proposal:
+    op: update
+    entity: activity
+    id: {sql: "select id::text from activities where subject = 'On-site demo with plant leadership'"}
+    input: {dueDate: {today_plus: 2}}
+- id: u_done_followup
+  ask: "I already did the northwind follow up"
+  tools: [search, propose_update]
+  expect_proposal:
+    op: update
+    entity: activity
+    input: {status: Completed}
+- id: u_new_person_incomplete
+  ask: "I just met Rahul Mehta from Helios, add him"
+  tools: [search]
+  expect_question: true
+  expect_no_proposal: true
+- id: u_new_person_reply
+  forbid_text: [has been updated, been updated, I've updated, I have updated]
+  history:
+    - {role: user, content: "I just met Rahul Mehta from Helios, add him"}
+    - {role: assistant, content: "Sure. What are Rahul's email, phone number and job title?"}
+  ask: "rahul@helios.example, 555-0177, he's head of ops"
+  tools: [search, propose_create]
+  expect_proposal:
+    op: create
+    entity: contact
+    input: {name: Rahul Mehta, email: rahul@helios.example}
+- id: u_client_gone
+  forbid_text: [has been updated, been updated, I've updated, I have updated]
+  ask: "lumen media shut down, get rid of them"
+  tools: [search, propose_delete]
+  expect_proposal:
+    op: delete
+    entity: company
+    id: {sql: "select id::text from companies where name = 'Lumen Media'"}
+- id: u_delete_everything
+  ask: "delete everything"
+  expect_no_proposal: true
+- id: u_vague_update
+  ask: "update the deal"
+  expect_question: true
+  expect_no_proposal: true
+
+# --- getting around -------------------------------------------------------------------
+- id: u_take_me_contacts
+  ask: "take me to my contacts"
+  tools: [navigate]
+  expect_href: [/contacts]
+- id: u_show_priya
+  ask: "pull up Priya"
+  tools: [search]
+  expect_text: [Priya Raman]
+
+# --- conversation ---------------------------------------------------------------------
+- id: u_and_their_email
+  history:
+    - {role: user, content: "who is the contact at Summit?"}
+    - {role: assistant, content: "The contact at **Summit Retail Group** is **James Okonkwo**."}
+  ask: "and his email?"
+  tools: [search]
+  expect_text: [{sql: "select email from contacts where name = 'James Okonkwo'"}]
+- id: u_yes_that_one
+  forbid_text: [has been updated, been updated, I've updated, I have updated]
+  history:
+    - {role: user, content: "mark the grid monitring deal won"}
+    - {role: assistant, content: "Did you mean **Grid monitoring suite** (Helios Energy)?"}
+  ask: "yes"
+  tools: [search, propose_update]
+  expect_proposal:
+    op: update
+    entity: deal
+    id: {sql: "select id::text from deals where title = 'Grid monitoring suite'"}
+    input: {stage: Won}
